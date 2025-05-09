@@ -18,9 +18,9 @@ struct tfa_irq_name {
 	char *irq_name;
 };
 
-#include "tfa2_tfafieldnames_N1C.h"
+#include "tfa2_tfafieldnames.h"
 /* diffs for specific devices */
-#include "tfa9866n2_tfafieldnames.h"
+#include "tfa9866n3_tfafieldnames.h"
 #include "tfa9866_genregs.h"
 
 /* missing 'common' defs break the build but unused in TFA1 context */

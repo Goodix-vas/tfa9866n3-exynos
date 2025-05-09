@@ -14,6 +14,7 @@
 #define TFA98XX_CLOCK_CONTROL                       0x04
 #define TFA98XX_KEY2_PROTECTED_CLOCK_GATING_CONTROL 0x05
 #define TFA98XX_DEVICE_REVISION1                    0x06
+#define TFA98XX_AMP_CONTROL                	    0x08
 #define TFA98XX_STATUS_FLAGS0                       0x10
 #define TFA98XX_STATUS_FLAGS1                       0x11
 #define TFA98XX_STATUS_FLAGS2                       0x12
