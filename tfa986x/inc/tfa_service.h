@@ -25,7 +25,7 @@ extern "C" {
 /* Linux kernel module defines TFA98XX_GIT_VERSIONS
  * in the linux_driver/Makefile
  */
-#define TFA98XX_GIT_VERSIONS "v6.13.0+-Apr.01,2024"
+#define TFA98XX_GIT_VERSIONS "v6.13.0+-May.11,2025"
 
 #if !defined(TFA98XX_GIT_VERSIONS)
 #include "versions.h"

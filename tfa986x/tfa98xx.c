@@ -34,14 +34,28 @@
 
 #define TFA98XX_VERSION	TFA98XX_API_REV_STR
 
+#if defined(TFA_PLATFORM_EXYNOS)
+#define TFA_PLATFORM "EXYNOS"
+#elif defined(TFA_PLATFORM_QUALCOMM)
+#define TFA_PLATFORM "QUALCOMM"
+#elif defined(TFA_PLATFORM_MTK)
+#define TFA_PLATFORM "MTK"
+#else
+#define TFA_PLATFORM ""
+#endif
+
+#if defined(TFA_STEREO_NODE)
+#define TFA_NODE "STEREO"
+#else
+#define TFA_NODE "MONO"
+#endif
+
 #define I2C_RETRIES 50
 #define I2C_RETRY_DELAY 5 /* ms */
 #define TFA_RESET_DELAY 5 /* ms */
 
 #include <linux/power_supply.h>
 #define REF_TEMP_DEVICE_NAME "battery"
-
-#define TFA98XX_VERSION	TFA98XX_API_REV_STR
 
 /* Change volume selection behavior:
  * Uncomment following line to generate a profile change when updating
@@ -588,7 +602,7 @@ r_c_err:
 static ssize_t tfa98xx_dbgfs_version_read(struct file *file,
 	char __user *user_buf, size_t count, loff_t *ppos)
 {
-	char str[] = TFA98XX_VERSION "\n";
+	char str[] = TFA98XX_VERSION "_" TFA_NODE "_" TFA_PLATFORM "\n";
 	int ret;
 
 	ret = simple_read_from_buffer(user_buf, count, ppos, str, sizeof(str));
@@ -6286,7 +6300,7 @@ static int __init tfa98xx_i2c_init(void)
 {
 	int ret = 0;
 
-	pr_info("TFA98XX driver version %s\n", TFA98XX_VERSION);
+	pr_info("TFA98XX driver version %s %s %s\n", TFA98XX_VERSION, TFA_NODE, TFA_PLATFORM);
 
 	/* Enable debug traces */
 	tfa98xx_kmsg_regs = trace_level & 2;
