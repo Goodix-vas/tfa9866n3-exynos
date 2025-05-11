@@ -122,24 +122,24 @@ static enum tfa98xx_error tfa_update_lpm(struct tfa_device *tfa, int state)
 static enum tfa98xx_error tfa_dsp_reset(struct tfa_device *tfa, int state)
 {
 	/* generic function */
-	TFA_SET_BF_VOLATILE(tfa, RST, (uint16_t)state);
+	//TFA_SET_BF_VOLATILE(tfa, RST, (uint16_t)state);
 
 	return TFA98XX_ERROR_OK;
 }
 
 static int tfa_set_swprofile(struct tfa_device *tfa, unsigned short new_value)
 {
-	int mtpk, active_value = tfa->profile;
+	int active_value = tfa->profile;
 
 	/* Also set the new value in the struct */
 	tfa->profile = new_value - 1;
 
 	/* for TFA1 devices */
 	/* it's in MTP shadow, so unlock if not done already */
-	mtpk = TFA_GET_BF(tfa, MTPK); /* get current key */
-	TFA_SET_BF_VOLATILE(tfa, MTPK, 0x5a);
+	//mtpk = TFA_GET_BF(tfa, MTPK); /* get current key */
+	//TFA_SET_BF_VOLATILE(tfa, MTPK, 0x5a);
 	TFA_SET_BF_VOLATILE(tfa, SWPROFIL, new_value); /* set current profile */
-	TFA_SET_BF_VOLATILE(tfa, MTPK, (uint16_t)mtpk); /* restore key */
+	//TFA_SET_BF_VOLATILE(tfa, MTPK, (uint16_t)mtpk); /* restore key */
 
 	return active_value;
 }
@@ -152,17 +152,17 @@ static int tfa_get_swprofile(struct tfa_device *tfa)
 
 static int tfa_set_swvstep(struct tfa_device *tfa, unsigned short new_value)
 {
-	int mtpk, active_value = tfa->vstep;
+	int active_value = tfa->vstep;
 
 	/* Also set the new value in the struct */
 	tfa->vstep = new_value - 1;
 
 	/* for TFA1 devices */
 	/* it's in MTP shadow, so unlock if not done already */
-	mtpk = TFA_GET_BF(tfa, MTPK); /* get current key */
-	TFA_SET_BF_VOLATILE(tfa, MTPK, 0x5a);
+	//mtpk = TFA_GET_BF(tfa, MTPK); /* get current key */
+	//TFA_SET_BF_VOLATILE(tfa, MTPK, 0x5a);
 	TFA_SET_BF_VOLATILE(tfa, SWVSTEP, new_value); /* set current vstep */
-	TFA_SET_BF_VOLATILE(tfa, MTPK, (uint16_t)mtpk); /* restore key */
+	//TFA_SET_BF_VOLATILE(tfa, MTPK, (uint16_t)mtpk); /* restore key */
 
 	return active_value;
 }
@@ -185,7 +185,7 @@ static int tfa_get_mtpb(struct tfa_device *tfa)
 	int value = 0;
 
 	/* Set the new value in the hw register */
-	value = TFA_GET_BF(tfa, MTPB);
+	//value = TFA_GET_BF(tfa, MTPB);
 
 	return value;
 }
@@ -304,6 +304,7 @@ static enum tfa98xx_error tfa986x_specific(struct tfa_device *tfa)
 	enum tfa98xx_error error = TFA98XX_ERROR_OK;
 	unsigned short value, xor, rc;
 	unsigned short irqmask;
+	int bf_value;
 
 	if (tfa->in_use == 0)
 		return TFA98XX_ERROR_NOT_OPEN;
@@ -446,11 +447,21 @@ static enum tfa98xx_error tfa986x_specific(struct tfa_device *tfa)
 		/* ----- generated code end   ----- */
 		break;
 
-	case 0x200a66: /* Initial revision ID TFA9866 N3A0 */
-		/* ----- generated code start ----- */
-		/* -----  version 5 ----- */
-		reg_write(tfa, 0x50, 0xc000); /* POR=0x8000 */
-		reg_write(tfa, 0x67, 0x0626); /* POR=0x0628 */
+	case 0x200a66:/**TFA9866 N3A0**/		
+		bf_value = tfa_get_bf(tfa, TFA9866_BF_SPARE_F0_15_10);
+		if (bf_value >= 0)
+			tfa_set_bf(tfa, TFA9866_BF_CS_KTEMP, (uint16_t)bf_value);
+
+		/* ----- generated code start(V8)----- */
+		/* -----  version 12 ----- */
+		reg_write(tfa, 0x08, 0x009a); //POR=0x00d2
+		reg_write(tfa, 0x50, 0xc000); //POR=0x8000
+		reg_write(tfa, 0x62, 0x0666); //POR=0x06c6
+		reg_write(tfa, 0x63, 0x806d); //POR=0x80d4
+		reg_write(tfa, 0x65, 0x0c58); //POR=0x0458
+		reg_write(tfa, 0x67, 0x016d); //POR=0x0628
+		reg_write(tfa, 0x74, 0x5e28); //POR=0x6014
+		reg_write(tfa, 0x75, 0x1daa); //POR=0x39e0
 		/* ----- generated code end   ----- */
 		break;
 

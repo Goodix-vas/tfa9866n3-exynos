@@ -764,7 +764,7 @@ void tfa98xx_key2(struct tfa_device *tfa, int lock)
 	/* unhide lock registers */
 	reg_write(tfa, (tfa->tfa_family == 1) ? 0x40 : 0x0f, 0x5a6b);
 	/* lock/unlock key2 MTPK */
-	TFA_WRITE_REG(tfa, MTPKEY2, lock ? 0 : 0x5a);
+	//TFA_WRITE_REG(tfa, MTPKEY2, lock ? 0 : 0x5a);
 	/* unhide lock registers */
 	if (!tfa->advance_keys_handling) /*artf65038*/
 		reg_write(tfa, (tfa->tfa_family == 1) ? 0x40 : 0x0f, 0);
@@ -3042,13 +3042,6 @@ tfa_run_wait_calibration(struct tfa_device *tfa, int *calibrate_done)
 		pr_info("Calibration succeeded!\n");
 	}
 
-	/* Give reason why calibration failed! */
-	if (err != TFA98XX_ERROR_OK) {
-		if ((tfa->tfa_family == 2)
-			&& (TFA_GET_BF(tfa, REFCKSEL) == 1))
-			pr_err("Unable to calibrate the device with the internal clock!\n");
-	}
-
 	if (!tfa->is_probus_device)
 		return err;
 
@@ -3630,9 +3623,6 @@ int tfa_reset(struct tfa_device *tfa)
 				tfa->ext_dsp = 1;
 		}
 	} else {
-		/* Restore MANCOLD to POR state */
-		TFA_SET_BF_VOLATILE(tfa, MANCOLD, 1);
-
 		/* Coolflux has to be powered on to ensure proper ACS
 		 * bit state
 		 */
@@ -3660,13 +3650,6 @@ int tfa_reset(struct tfa_device *tfa)
 
 		/* Set PWDN = 1, set powerdown state */
 		err = TFA_SET_BF_VOLATILE(tfa, PWDN, 1);
-		if (err)
-			return err;
-
-		/* 88 needs SBSL on top of PWDN bit to start transition,
-		 * for 92 and 94 this doesn't matter
-		 */
-		err = TFA_SET_BF_VOLATILE(tfa, SBSL, 1);
 		if (err)
 			return err;
 
@@ -3959,7 +3942,7 @@ int tfa_dev_get_mtpb(struct tfa_device *tfa)
 
 int tfa_is_cold(struct tfa_device *tfa)
 {
-	int value;
+	int value = 0;
 
 	/*
 	 * check for cold boot status
@@ -3975,8 +3958,6 @@ int tfa_is_cold(struct tfa_device *tfa)
 		} else {
 			value = (TFA_GET_BF(tfa, MANSCONF) == 0);
 		}
-	} else {
-		value = (TFA_GET_BF(tfa, ACS) > 0);
 	}
 
 	value |= tfa->reset_mtpex; /* forced cold start */
@@ -4089,13 +4070,11 @@ void tfa_set_status_flag(struct tfa_device *tfa, int type, int value)
 
 int tfa_cf_enabled(struct tfa_device *tfa)
 {
-	int value;
+	int value = 1;
 
 	/* For probus, there is no CF */
 	if (tfa->is_probus_device)
 		value = (tfa->ext_dsp != 0);
-	else
-		value = TFA_GET_BF(tfa, CFE);
 
 	return value;
 }
@@ -4227,11 +4206,6 @@ enum tfa_error tfa_dev_set_state(struct tfa_device *tfa,
 		/* load I2C/PLL hardware setting (~wait2srcsettings) */
 		break;
 	case TFA_STATE_INIT_CF:
-		/* coolflux HW access possible (~initcf) */
-		/* Start with SBSL=0 to stay in initCF state */
-		if (!tfa->is_probus_device)
-			TFA_SET_BF(tfa, SBSL, 0);
-
 		/* We want to leave Wait4SrcSettings state for max2 */
 		if (tfa->tfa_family == 2)
 			TFA_SET_BF(tfa, MANSCONF, 1);
@@ -4267,12 +4241,8 @@ enum tfa_error tfa_dev_set_state(struct tfa_device *tfa,
 		/* Depending on our previous state we need to set 3 bits */
 		TFA_SET_BF(tfa, PWDN, 0); /* Coming from state 0 */
 		TFA_SET_BF(tfa, MANSCONF, 1); /* Coming from state 1 */
-		if (!tfa->is_probus_device)
-			/* Coming from state 6 */
-			TFA_SET_BF_VOLATILE(tfa, SBSL, 1);
-		else
-			/* No SBSL for probus device, we set AMPE to 1 */
-			TFA_SET_BF(tfa, AMPE, 1);
+		/* No SBSL for probus device, we set AMPE to 1 */
+		TFA_SET_BF(tfa, AMPE, 1);
 
 		/*
 		 * Disable MTP clock to protect memory.
@@ -4347,8 +4317,7 @@ enum tfa_state tfa_dev_get_state(struct tfa_device *tfa)
 		tfa->state = TFA_STATE_POWERDOWN;
 		break;
 	case 8: /* if dsp reset if off assume framework is running */
-		tfa->state = TFA_GET_BF(tfa, RST)
-			? TFA_STATE_INIT_CF : TFA_STATE_INIT_FW;
+		tfa->state = TFA_STATE_INIT_FW;
 		break;
 	case 9:
 		tfa->state = TFA_STATE_OPERATING;
@@ -4430,6 +4399,8 @@ enum tfa_error tfa_dev_mtp_set(struct tfa_device *tfa,
 		}
 		/* write RE25, calibration data */
 		tfa->mohm[0] = value;
+		pr_info("%s: ch. %d, mohm[0] %d\n", __func__, 
+			tfa_get_channel_from_dev_idx(tfa, -1), tfa->mohm[0]);
 		break;
 	case TFA_MTP_LOCK:
 		break;

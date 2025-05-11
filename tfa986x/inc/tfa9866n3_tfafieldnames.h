@@ -212,6 +212,7 @@ enum tfa9866_bf_enum_list {
     TFA9866_BF_DCVOS = 0x7687,    /*!< Maximum boost voltage                              */
     TFA9866_BF_MUSMODE= 0x7cc0,    /*!< Music Mode                                         */
     TFA9866_BF_LNM   = 0x7ce1,    /*!< Low Noise Mode control when in Music Mode          */
+    TFA9866_BF_CS_KTEMP = 0x8305, /*!< Current sense temperature compensation trimming (1 - VALUE*TEMP)*signal */
     TFA9866_BF_DCPTC = 0x8401,    /*!< Voltage sense dc speaker protection time           */
     TFA9866_BF_DCPL  = 0x842c,    /*!< Voltage sense dc speaker protection level          */
     TFA9866_BF_DCPROT= 0x84f0,    /*!< Voltage sense dc speaker protection enable         */
@@ -241,6 +242,7 @@ enum tfa9866_bf_enum_list {
     TFA9866_BF_VPLO3 = 0xe890,    /*!< Brake vibration Phase                              */
     TFA9866_BF_VGAIN3= 0xe907,    /*!< Brake  vibration  gain                             */
     TFA9866_BF_VTM3  = 0xe987,    /*!< Brake  vibration time                              */
+    TFA9866_BF_SPARE_F0_15_10 = 0xf0a5,
     TFA9866_BF_ADC11GAIN= 0xf6a5,    /*!< Adc11b gain compensation setting, compensate factor (2's complement) */
 };
 
