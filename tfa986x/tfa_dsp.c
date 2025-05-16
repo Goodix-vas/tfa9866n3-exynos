@@ -2783,9 +2783,6 @@ enum tfa98xx_error tfa_wait_cal(struct tfa_device *tfa)
 			PRINT_ASSERT(err);
 	}
 
-	if (calibration_done)
-		cal_err = TFA98XX_ERROR_BAD_PARAMETER;
-
 	tfa_restore_after_cal(0, cal_err);
 
 	return cal_err;

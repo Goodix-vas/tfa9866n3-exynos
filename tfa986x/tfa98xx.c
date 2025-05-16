@@ -5239,7 +5239,7 @@ struct tfa_device *tfa98xx_get_tfa_device_from_index(int index)
 	static struct tfa_device *tfadevset[MAX_HANDLES];
 
 	/* set main/head device */
-	if (index == -1) {
+	if (index == -1 || index == 0xf) {
 		if (tfa98xx_head_device != NULL
 			&& tfa98xx_head_device->tfa != NULL)
 			index = tfa98xx_head_device->tfa->dev_idx;
@@ -5822,7 +5822,7 @@ int tfa98xx_write_sknt_control(int idx, int value)
 	}
 #endif
 
-	pm = tfa_get_power_state(idx);
+	//pm = tfa_get_power_state(idx);
 
 	pr_info("%s: tfa_stc - dev %d - set surface temperature (%d)\n",
 		__func__, idx, value);
