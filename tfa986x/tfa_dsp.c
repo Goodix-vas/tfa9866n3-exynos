@@ -4928,8 +4928,6 @@ enum tfa98xx_error tfa_write_volume(struct tfa_device *tfa, int *sknt)
 {
 	enum tfa98xx_error error = TFA98XX_ERROR_OK;
 	int i, spkr_count = 0;
-	int active_channel = -1, channel = 0;
-	int stcontrol[MAX_CHANNELS] = {0};
 	unsigned char bytes[2 * 3] = {0};
 	int data = 0;
 
@@ -4945,40 +4943,15 @@ enum tfa98xx_error tfa_write_volume(struct tfa_device *tfa, int *sknt)
 		return error;
 	}
 
-	/* SoftDSP interface differs from hw-dsp interfaces */
-	if (tfa->is_probus_device && tfa->dev_count > 1)
-		spkr_count = tfa->dev_count;
-
 	if (sknt == NULL) {
-		pr_info("%s: reset surface temperature control\n",
-			__func__);
-	} else {
-		/* map surface temperature per channel */
-		for (i = 0; i < spkr_count; i++) {
-			channel = tfa_get_channel_from_dev_idx(NULL, i);
-			if (channel != -1)
-				stcontrol[channel] = sknt[i];
-		}
-	}
-
-	if (tfa->dev_count == 1) /* mono: duplicate channel 0 */
-		active_channel = 0;
-	else if (tfa->dev_count >= 2) /* stereo and beyond */
-		active_channel = tfa_get_channel_from_dev_idx(NULL,
-			tfa->active_handle); /* -1 if active_handle == -1 */
-
-	if (active_channel != -1) {
-		pr_info("%s: copy vol from active dev %d (channel %d)\n",
-			__func__, tfa->active_handle,
-			active_channel);
-		for (i = 0; i < MAX_CHANNELS; i++)
-			stcontrol[i] = stcontrol[active_channel];
+		pr_err("bad parameter error as sknt is null\n");
+		return TFA98XX_ERROR_BAD_PARAMETER;
 	}
 
 	for (i = 0; i < MAX_CHANNELS; i++) {
 		pr_info("%s: dev %d - surface temperature (%d)\n",
-			__func__, i, stcontrol[i]);
-		data = (int)stcontrol[i]; /* send value directly */
+			__func__, i, sknt[i]);
+		data = (int)sknt[i]; /* send value directly */
 
 		bytes[i * 3] = (uint8_t)((data >> 16) & 0xffff);
 		bytes[i * 3 + 1] = (uint8_t)((data >> 8) & 0xff);
