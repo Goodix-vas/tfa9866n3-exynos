@@ -591,6 +591,11 @@ enum tfa98xx_error tfa_run_startup(struct tfa_device *tfa, int profile);
 enum tfa98xx_error tfa_set_calibration_values(struct tfa_device *tfa);
 
 /*
+ * Force to bypass and initialize algorithm if it's already configured
+ */
+enum tfa98xx_error tfa98xx_set_tfadsp_bypass(struct tfa_device *tfa);
+
+/*
  * Call tfa_set_calibration_values at once with loop
  */
 enum tfa98xx_error tfa_set_calibration_values_once(struct tfa_device *tfa);

@@ -1306,6 +1306,42 @@ static void tfa98xx_debug_remove(struct tfa98xx *tfa98xx)
 }
 #endif /* CONFIG_DEBUG_FS */
 
+enum tfa98xx_error tfa98xx_set_tfadsp_bypass(struct tfa_device *tfa)
+{
+	enum tfa98xx_error err = TFA98XX_ERROR_OK;
+	int res_len = 3;
+	unsigned char buf[3] = {0};
+	int data[2], is_configured = 0;
+
+	res_len = 3;
+	err = tfa_dsp_cmd_id_write_read(tfa, MODULE_CUSTOM,
+		CUSTOM_PARAM_GET_CONFIGURED, res_len, buf);
+	if (err == TFA98XX_ERROR_OK) {
+		tfa98xx_convert_bytes2data(res_len, buf, data);
+		is_configured = data[0];
+
+		pr_info("%s: check if configured (%d)\n",
+			__func__, is_configured);
+	}
+
+	/* move on if not configured */
+	if (!is_configured)
+		return err;
+
+	pr_info("%s: set bypass if configured\n",
+		__func__);
+
+	memset(buf, 0, 3); /* dummy value */
+	tfa->individual_msg = 1;
+	err = tfa_dsp_cmd_id_write(tfa, MODULE_CUSTOM,
+		CUSTOM_PARAM_SET_BYPASS, 3, buf);
+	if (err != TFA98XX_ERROR_OK)
+		pr_info("%s: error in setting bypass (err = %d)\n",
+			__func__, err);
+
+	return err;
+}
+
 static void tfa98xx_check_calibration(struct tfa98xx *tfa98xx)
 {
 	unsigned short value = 0;
@@ -1352,9 +1388,17 @@ static int tfa98xx_run_calibration(struct tfa98xx *tfa98xx0)
 
 	/* EXT_TEMP */
 	err = tfa98xx_read_reference_temp(&temp_val);
-	if (err)
+	if (err) {
 		pr_err("%s: error in reading reference temp\n",
 			__func__);
+		temp_val = DEFAULT_REF_TEMP; /* default */
+	}
+
+	if (tfa98xx0->tfa->is_bypass)
+		pr_debug("%s: skipped setting bypass - tfadsp in bypass\n",
+			__func__);
+	else
+		tfa98xx_set_tfadsp_bypass(tfa98xx0->tfa);
 
 	ndev = tfa98xx0->tfa->dev_count;
 
@@ -1372,6 +1416,8 @@ static int tfa98xx_run_calibration(struct tfa98xx *tfa98xx0)
 		} else {
 			tfa_dev_mtp_set(tfa, TFA_MTP_RE25, 0);
 		}
+
+		tfa98xx_set_exttemp(tfa, temp_val); /* EXT_TEMP */
 
 		pr_info("%s: dev %d - force to enable auto calibration (%s -> enabled)",
 			__func__, idx,
@@ -5625,6 +5671,7 @@ int tfa_get_power_state(int index)
 	if ((control == 0x0 || control == 0x3)
 		&& (state == 0x1))
 		pm |= 0x2; /* idle power */
+
 	switch (tfa->rev & 0xff) {
 	case 0x66:
 		state = TFAxx_GET_BF(tfa, LPMS);
@@ -5698,10 +5745,11 @@ int tfa98xx_update_spkt_data(int idx)
 	}
 
 	pm = tfa_get_power_state(idx);
+	// 0:normal, 1:low power mode, 2:idle power mode
 	pr_info("%s: tfa_stc - dev %d - power state 0x%x\n",
 		__func__, idx, pm);
 
-	if (pm > 0) /* reset temperature in low power state */
+	if (pm > 1) /* reset temperature in idle power state */
 		return DEFAULT_REF_TEMP;
 
 	if (tfa->is_configured <= 0) {
