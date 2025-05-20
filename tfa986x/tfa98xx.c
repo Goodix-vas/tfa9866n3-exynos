@@ -5815,16 +5815,6 @@ int tfa98xx_write_sknt_control(int idx, int value)
 	if (tfa->tfa_family == 0)
 		return -ENODEV;
 
-	if (tfa->active_handle > 0) {
-		pr_info("%s: switched to active handle - %d\n",
-			__func__, tfa->active_handle);
-		tfa = tfa98xx_get_tfa_device_from_index(tfa->active_handle);
-		if (tfa == NULL)
-			return -ENODEV;
-		if (tfa->tfa_family == 0)
-			return -ENODEV;
-	}
-
 	ndev = tfa->dev_count;
 #if !defined(TFA_STEREO_NODE)
 	if (ndev == 1 && idx > 0)
