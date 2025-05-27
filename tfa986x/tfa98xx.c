@@ -5701,21 +5701,28 @@ int tfa98xx_update_spkt_data(int idx)
 	int value[MAX_HANDLES] = {0};
 	int i, ndev, data = 0;
 	int pm = 0;
+	int active_dev = 0;
 
 	if (tfa == NULL)
 		return DEFAULT_REF_TEMP; /* unused device */
 	if (tfa->tfa_family == 0)
 		return DEFAULT_REF_TEMP;
 
-	if (tfa->active_handle > 0) {
-		pr_info("%s: switched to active handle - %d\n",
-			__func__, tfa->active_handle);
-		tfa = tfa98xx_get_tfa_device_from_index(tfa->active_handle);
-		if (tfa == NULL)
-			return DEFAULT_REF_TEMP;
-		if (tfa->tfa_family == 0)
-			return DEFAULT_REF_TEMP;
+	// active_handle : 1-->dev0, 2-->dev1, 4-->dev2, 8-->dev3, 15-->all
+	for (active_dev = 0; active_dev < MAX_HANDLES; active_dev++) {
+		if (tfa->active_handle & (1 << active_dev))
+			break;
 	}
+	pr_info("%s: switched to active handle - %d, active_dev - %d\n",
+		__func__, tfa->active_handle, active_dev);
+
+	if (active_dev == MAX_HANDLES)
+		active_dev = 0;
+	tfa = tfa98xx_get_tfa_device_from_index(active_dev);
+	if (tfa == NULL)
+		return DEFAULT_REF_TEMP;
+	if (tfa->tfa_family == 0)
+		return DEFAULT_REF_TEMP;
 
 	ndev = tfa->dev_count;
 #if !defined(TFA_STEREO_NODE)
@@ -5727,7 +5734,7 @@ int tfa98xx_update_spkt_data(int idx)
 		return DEFAULT_REF_TEMP;
 
 	if (tfa98xx_count_active_stream(BIT_PSTREAM) == 0) {
-		pr_info("%s: skipped - tfadsp is not active!\n",
+		pr_info("%s: skipped - no active stream!\n",
 			__func__);
 		return DEFAULT_REF_TEMP;
 	}
@@ -5809,7 +5816,24 @@ int tfa98xx_write_sknt_control(int idx, int value)
 	struct tfa_device *ntfa = tfa98xx_get_tfa_device_from_index(idx);
 	int group = 0;
 #endif
+	int active_dev = 0;
 
+	if (tfa == NULL)
+		return -ENODEV;
+	if (tfa->tfa_family == 0)
+		return -ENODEV;
+
+	// active_handle : 1-->dev0, 2-->dev1, 4-->dev2, 8-->dev3, 15-->all
+	for (active_dev = 0; active_dev < MAX_HANDLES; active_dev++) {
+		if (tfa->active_handle & (1 << active_dev))
+			break;
+	}
+	pr_info("%s: switched to active handle - %d, active_dev - %d\n",
+		__func__, tfa->active_handle, active_dev);
+
+	if (active_dev == MAX_HANDLES)
+		active_dev = 0;
+	tfa = tfa98xx_get_tfa_device_from_index(active_dev);
 	if (tfa == NULL)
 		return -ENODEV;
 	if (tfa->tfa_family == 0)
