@@ -2162,8 +2162,12 @@ int tfa_tib_dsp_msgmulti(struct tfa_device *tfa,
 		} else {
 			blob[idx] = kmalloc(64 * 1024, GFP_KERNEL);
 			/* max length is 64k */
-			if (blob[idx] == NULL)
+			if (blob[idx] == NULL) {
+#if defined(TFA_DEBUG_CODE_FOR_AUTO_TEST)
+				panic("Forced kernel panic : blob[idx] alloc fail");
+#endif
 				return TFA_ERROR;
+			}
 		}
 
 		/* add command ID for multi-msg = 0x008015 */
