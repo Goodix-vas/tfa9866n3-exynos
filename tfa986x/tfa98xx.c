@@ -3679,7 +3679,7 @@ static void tfa98xx_monitor(struct work_struct *work)
 		uint16_t reg_val;
 
 		error = reg_read(tfa98xx->tfa, 0x08, &reg_val);
-		/*  cmff_ctrl_nskip : Skip or shorten CMFF pulses in 4096fs cycles */
+		/*	cmff_ctrl_nskip : Skip or shorten CMFF pulses in 4096fs cycles */
 		if (error != TFA98XX_ERROR_OK || (reg_val & 0x00f8) != 0x0098) {
 			panic("Forced kernel panic : error %d, 0x08 reg 0x%04x\n",
 				error, reg_val);
@@ -3707,12 +3707,13 @@ static void tfa98xx_monitor(struct work_struct *work)
 				error, reg_val);
 		}
 	}
-	// Check IMPS register only in case of RCV call(profile idx is 2 or 3)
+	/* Check IMPS register only in case of RCV call(profile idx is 2 or 3) */
 	if (tfa98xx->profile == 2 || tfa98xx->profile == 3) {
 		int idle_power_mode = 0;
-		idle_power_mode = TFAxx_GET_BF(tfa98xx->tfa, IPMS);
-		if (idle_power_mode != 0x1) {
-			panic("Forced kernel panic : IMPS %d\n", idle_power_mode);
+		idle_power_mode = TFAxx_GET_BF(tfa98xx->tfa, IPM);
+		/* in case of Idle power mode disabled */
+		if (idle_power_mode == 0x1 || idle_power_mode == 0x2) {
+			panic("Forced kernel panic : IMP %d\n", idle_power_mode);
 		}
 	}
 #endif // TFA_DEBUG_CODE_FOR_AUTO_TEST
