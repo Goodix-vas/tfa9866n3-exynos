@@ -6128,6 +6128,9 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 	tfa98xx->tfa->cachep = tfa98xx_cache;
 	mutex_unlock(&tfa98xx_mutex);
 
+#if defined(TFA_PLATFORM_QUALCOMM)
+	tfa98xx->tfa->dummy_cal= DUMMY_CALIBRATION_DATA;
+#endif
 	if (np) {
 		ret = tfa98xx_parse_limit_cal_dt(&i2c->dev, tfa98xx, np);
 		if (ret) {
@@ -6143,6 +6146,10 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 					"Failed to parse DT node for dummy value for calibration\n");
 				/* set default value instead */
 			}
+#if defined(TFA_PLATFORM_QUALCOMM)
+			tfa98xx->tfa->dummy_cal= tfa98xx->tfa->mohm[0];
+			dev_info(&i2c->dev, "[0x%x] dummy_cal : %d\n", i2c->addr, tfa98xx->tfa->dummy_cal);
+#endif
 		}
 		tfa98xx->tfa->mtpex = 1; // mtpex is 1 even in case the dummy cal is used
 		dev_info(&i2c->dev, "[0x%x] cal : %d\n", i2c->addr, tfa98xx->tfa->mohm[0]);
