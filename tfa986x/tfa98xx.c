@@ -3298,10 +3298,6 @@ retry:
 
 int tfa_ext_register(dsp_send_message_t tfa_send_message,
 	dsp_read_message_t tfa_read_message,
-	tfa_event_handler_t *tfa_event_handler);
-
-int tfa_ext_register(dsp_send_message_t tfa_send_message,
-	dsp_read_message_t tfa_read_message,
 	tfa_event_handler_t *tfa_event_handler)
 {
 	struct tfa98xx *tfa98xx;
