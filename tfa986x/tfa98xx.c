@@ -3673,50 +3673,6 @@ static void tfa98xx_monitor(struct work_struct *work)
 			tfa_get_bf(tfa98xx->tfa,
 			tfa98xx->overlay_bf));
 	error = tfaxx_status(tfa98xx->tfa);
-#if defined(TFA_DEBUG_CODE_FOR_AUTO_TEST)
-	if (tfa98xx->tfa->revid == 0x200a66) { /**TFA9866 N3A0**/
-		/* Check if the register optimal setting is changed */
-		uint16_t reg_val;
-
-		error = reg_read(tfa98xx->tfa, 0x08, &reg_val);
-		/*	cmff_ctrl_nskip : Skip or shorten CMFF pulses in 4096fs cycles */
-		if (error != TFA98XX_ERROR_OK || (reg_val & 0x00f8) != 0x0098) {
-			panic("Forced kernel panic : error %d, 0x08 reg 0x%04x\n",
-				error, reg_val);
-		}
-
-		error = reg_read(tfa98xx->tfa, 0x50, &reg_val);
-		/* BSSR optimal setting is 1 */
-		if (error != TFA98XX_ERROR_OK || (reg_val & 0x4000) != 0x4000) {
-			panic("Forced kernel panic : error %d, 0x50 reg 0x%04x\n",
-				error, reg_val);
-		}
-
-		error = reg_read(tfa98xx->tfa, 0x65, &reg_val);
-		/* VBATMAX optimal setting is 1 */
-		if (error != TFA98XX_ERROR_OK || (reg_val & 0x0800) != 0x0800) {
-			panic("Forced kernel panic : error %d, 0x65 reg 0x%04x\n",
-				error, reg_val);
-		}
-
-		error = reg_read(tfa98xx->tfa, 0x74, &reg_val);
-		/* Check DCOFFSET, DCHOLD */
-		if (error != TFA98XX_ERROR_OK || (reg_val & 0x007c) != 0x0028 ||
-			(reg_val & 0x3e00) != 0x1e00) {
-			panic("Forced kernel panic : error %d, 0x74 reg 0x%04x\n",
-				error, reg_val);
-		}
-	}
-	/* Check IMPS register only in case of RCV call(profile idx is 2 or 3) */
-	if (tfa98xx->profile == 2 || tfa98xx->profile == 3) {
-		int idle_power_mode = 0;
-		idle_power_mode = TFAxx_GET_BF(tfa98xx->tfa, IPM);
-		/* in case of Idle power mode disabled */
-		if (idle_power_mode == 0x1 || idle_power_mode == 0x2) {
-			panic("Forced kernel panic : IMP %d\n", idle_power_mode);
-		}
-	}
-#endif // TFA_DEBUG_CODE_FOR_AUTO_TEST
 	mutex_unlock(&tfa98xx->dsp_lock);
 
 	if (error == TFA98XX_ERROR_DSP_NOT_RUNNING) {
@@ -4655,9 +4611,6 @@ static ssize_t tfa98xx_rw_write(struct file *filp, struct kobject *kobj,
 	if (data == NULL) {
 		ret = -ENOMEM;
 		pr_debug("can not allocate memory\n");
-#if defined(TFA_DEBUG_CODE_FOR_AUTO_TEST)
-		panic("Forced kernel panic : data alloc fail");
-#endif
 		return ret;
 	}
 

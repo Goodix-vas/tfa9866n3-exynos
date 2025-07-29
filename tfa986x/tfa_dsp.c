@@ -292,12 +292,6 @@ int tfa_irq_report(struct tfa_device *tfa)
 				__func__, tfa->dev_idx,
 				tfa98xx_irq_names[irq].irq_name,
 				tfa98xx_irq_info[irq]);
-#if defined(TFA_DEBUG_CODE_FOR_AUTO_TEST)
-			// 3: Overcurrent, 4: Undervoltage, 10: Overvoltage
-			if (irq == 3 || irq == 4 || irq == 10) {
-				panic("Forced kernel panic : irq %d\n", irq);
-			}
-#endif
 			if (irq != tfa9866_irq_stnoclk
 				|| !tfa->blackbox_enable || tfa0 == NULL)
 				continue;
@@ -421,9 +415,6 @@ enum tfa98xx_error tfa_buffer_pool(struct tfa_device *tfa,
 			tfa->buf_pool[index].in_use = 1;
 			pr_err("%s: buffer_pool[%d] - kmalloc error %d bytes\n",
 				__func__, index, size);
-#if defined(TFA_DEBUG_CODE_FOR_AUTO_TEST)
-			panic("Forced kernel panic : buf_pool alloc fail");
-#endif
 			return TFA98XX_ERROR_FAIL;
 		}
 		pr_debug("%s: buffer_pool[%d] - kmalloc allocated %d bytes\n",
@@ -1003,9 +994,6 @@ static enum tfa98xx_error _dsp_msg(struct tfa_device *tfa, int lastmessage)
 		/* max length is 64k */
 		blob = kmalloc(64 * 1024, GFP_KERNEL);
 		if (blob == NULL) {
-#if defined(TFA_DEBUG_CODE_FOR_AUTO_TEST)
-			panic("Forced kernel panic : blob alloc fail");
-#endif
 			return TFA98XX_ERROR_FAIL;
 		}
 	}
@@ -1343,9 +1331,6 @@ enum tfa98xx_error tfa_dsp_cmd_id_write(struct tfa_device *tfa,
 		buffer = kmalloc(num_bytes + 3, GFP_KERNEL);
 	if (buffer == NULL) {
 		mutex_unlock(&dsp_msg_lock);
-#if defined(TFA_DEBUG_CODE_FOR_AUTO_TEST)
-		panic("Forced kernel panic : buffer alloc fail");
-#endif
 		return TFA98XX_ERROR_FAIL;
 	}
 
@@ -4861,16 +4846,6 @@ enum tfa98xx_error tfa_update_log(void)
 				__func__, idx, i,
 				tfa->log_data[group + i],
 				data[offset + i]);
-#if defined(TFA_DEBUG_CODE_FOR_AUTO_TEST)
-			if (i == ID_OVERXMAX_COUNT && data[offset + i] > 0) {
-				panic("Forced kernel panic : dev %d, OverXCnt %d\n",
-					idx, data[offset + i]);
-			}
-			if (i == ID_OVERTMAX_COUNT && data[offset + i] > 0) {
-				panic("Forced kernel panic : dev %d, OverTCnt %d\n",
-					idx, data[offset + i]);
-			}
-#endif
 		pr_info("%s: dev %d - blackbox: data[%d] = %d\n",
 			__func__, idx, ID_MAXX_KEEP_LOG,
 			tfa->log_data[group + ID_MAXX_KEEP_LOG]);

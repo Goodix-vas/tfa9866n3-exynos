@@ -25,6 +25,5 @@
 #endif
 #define TFA_PLATFORM_EXYNOS
 
-//#define TFA_DEBUG_CODE_FOR_AUTO_TEST
 #endif /* __CONFIG_LINUX_KERNEL_INC__ */
 
