@@ -3190,7 +3190,6 @@ enum tfa98xx_error tfa98xx_write_register16(struct tfa_device *tfa,
 	int ret;
 	int retries = I2C_RETRIES;
 	struct tfa_device *tfa0 = NULL;
-	int group;
 
 	/* set head device */
 	tfa0 = tfa98xx_get_tfa_device_from_index(-1);
@@ -3220,11 +3219,6 @@ retry:
 			goto retry;
 		}
 
-		if (tfa0 != NULL && tfa0->blackbox_enable) {
-			group = tfa->dev_idx * ID_BLACKBOX_MAX;
-			tfa0->log_data[group + ID_I2CERR_COUNT]++;
-		}
-
 		return TFA98XX_ERROR_FAIL;
 	}
 
@@ -3247,7 +3241,6 @@ enum tfa98xx_error tfa98xx_read_register16(struct tfa_device *tfa,
 	int retries = I2C_RETRIES;
 	int ret;
 	struct tfa_device *tfa0 = NULL;
-	int group;
 
 	/* set head device */
 	tfa0 = tfa98xx_get_tfa_device_from_index(-1);
@@ -3276,11 +3269,6 @@ retry:
 					ret, 0, I2C_RETRIES - retries);
 			msleep(I2C_RETRY_DELAY);
 			goto retry;
-		}
-
-		if (tfa0 != NULL && tfa0->blackbox_enable) {
-			group = tfa->dev_idx * ID_BLACKBOX_MAX;
-			tfa0->log_data[group + ID_I2CERR_COUNT]++;
 		}
 
 		return TFA98XX_ERROR_FAIL;
@@ -3632,6 +3620,12 @@ static int tfa98xx_load_container(struct tfa98xx *tfa98xx)
 	} while (tries < TFA98XX_LOADFW_NTRIES
 		&& tfa98xx->dsp_fw_state != TFA98XX_DSP_FW_OK);
 
+	if (ret == 0 && tfa98xx->dsp_fw_state == TFA98XX_DSP_FW_OK) {
+		tfa98xx->probe_state |= TFA98XX_PROBE_STATE_CNT_LOAD_SUCCESS;
+	} else {
+		pr_err("%s: CNT load failed %d\n", __func__, ret);
+	}
+
 	return ret;
 }
 
@@ -3673,6 +3667,10 @@ static void tfa98xx_monitor(struct work_struct *work)
 			tfa_get_bf(tfa98xx->tfa,
 			tfa98xx->overlay_bf));
 	error = tfaxx_status(tfa98xx->tfa);
+
+	/* TFA AMP On is done */
+	// notify_amp_on_done(tfa98xx->tfa->dev_idx); // top:0, bottom:1
+
 	mutex_unlock(&tfa98xx->dsp_lock);
 
 	if (error == TFA98XX_ERROR_DSP_NOT_RUNNING) {
@@ -4194,8 +4192,14 @@ static int _tfa98xx_mute(struct tfa98xx *tfa98xx, int mute, int stream)
 				/* get logging once
 				 * before shutting down pstream
 				 */
+#if !defined(TFA_PLATFORM_QUALCOMM)
 				pr_info("%s: get blackbox logging\n", __func__);
+#if defined(TFA_SUPPORT_NEW_DATALOGGER)
+				tfa_update_log2();
+#else
 				tfa_update_log();
+#endif
+#endif
 			}
 		tfa98xx->tfa->unset_log = 0;
 
@@ -4755,8 +4759,8 @@ static ssize_t tfa98xx_blackbox_show(struct device *dev,
 			tfa0->log_data[offset + ID_OVERXMAX_COUNT],
 			tfa0->log_data[offset + ID_OVERTMAX_COUNT]);
 		count += snprintf(buf + strlen(buf), PAGE_SIZE,
-			"cntI2Cerr %d, ",
-			tfa0->log_data[offset + ID_I2CERR_COUNT]);
+			"cntOCPerr %d, ",
+			tfa0->log_data[offset + ID_OCP_COUNT]);
 		count += snprintf(buf + strlen(buf), PAGE_SIZE,
 			"cntNoClk %d, ",
 			tfa0->log_data[offset + ID_NOCLK_COUNT]);
@@ -4810,6 +4814,98 @@ static ssize_t tfa98xx_blackbox_store(struct device *dev,
 		if (ret < 0)
 			return ret;
 	}
+
+	return count;
+}
+
+static ssize_t tfa98xx_blackbox2_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct tfa98xx *tfa98xx = dev_get_drvdata(dev);
+	int count = 0;
+	int idx, ndev, offset;
+	struct tfa_device *tfa0 = NULL;
+
+	if (tfa98xx->tfa->tfa_family == 0) {
+		pr_err("[0x%x] %s: system is not initialized: not probed yet!\n",
+			tfa98xx->i2c->addr, __func__);
+		return -EIO;
+	}
+
+	ndev = tfa98xx->tfa->dev_count;
+	if (ndev < 1)
+		return -EINVAL;
+
+	/* set main device */
+	tfa0 = tfa98xx_get_tfa_device_from_index(-1);
+	if (tfa0 == NULL) {
+		pr_err("[0x%x] %s: head device not found\n",
+			tfa98xx->i2c->addr, __func__);
+		return -EINVAL;
+	}
+
+	pr_info("%s: [0x%x]head dev %d blackbox state: %d\n", __func__, 
+		tfa0->resp_address, tfa0->dev_idx, tfa0->blackbox_enable);
+
+	for (idx = 0; idx < ndev; idx++) {
+		offset = idx * ID_BLACKBOX_MAX;
+		if (idx == (ndev-1)) {
+			count += snprintf(buf + strlen(buf), PAGE_SIZE,
+				"%d,%d\n",
+				tfa0->log_data[offset + ID_OCP_COUNT],
+				tfa0->log_data[offset + ID_NOCLK_COUNT]);
+		} else {
+			count += snprintf(buf + strlen(buf), PAGE_SIZE,
+				"%d,%d,",
+				tfa0->log_data[offset + ID_OCP_COUNT],
+				tfa0->log_data[offset + ID_NOCLK_COUNT]);
+		}
+	}
+
+	return count;
+}
+
+static ssize_t tfa98xx_blackbox2_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct tfa98xx *tfa98xx = dev_get_drvdata(dev);
+	struct tfa_device *tfa0 = NULL;
+	int idx, ndev, offset;
+
+	if (tfa98xx->tfa->tfa_family == 0) {
+		pr_err("[0x%x] %s: system is not initialized: not probed yet!\n",
+			tfa98xx->i2c->addr, __func__);
+		return -EIO;
+	}
+
+	/* check string length, and account for eol */
+	if (count < 1)
+		return -EINVAL;
+
+	ndev = tfa98xx->tfa->dev_count;
+	if (ndev < 1)
+		return -EINVAL;
+
+	tfa0 = tfa98xx_get_tfa_device_from_index(-1);
+	if (tfa0 == NULL) {
+		pr_err("[0x%x] %s: head device not found\n",
+			tfa98xx->i2c->addr, __func__);
+		return -EINVAL;
+	}
+
+	pr_info("%s: [0x%x]head dev %d blackbox state: %d\n", __func__, 
+		tfa0->resp_address, tfa0->dev_idx, tfa0->blackbox_enable);
+
+	/* reset ocp and noclk count */
+	if (!strncmp(buf, "0", 1)) {
+		pr_info("%s: reset ocp and noclk count\n", __func__);
+		for (idx = 0; idx < ndev; idx++) {
+			offset = idx * ID_BLACKBOX_MAX;
+			tfa0->log_data[offset + ID_OCP_COUNT] = 0;
+			tfa0->log_data[offset + ID_NOCLK_COUNT] = 0;
+		}
+	
+}
 
 	return count;
 }
@@ -5224,6 +5320,15 @@ static struct device_attribute dev_attr_blackbox = {
 	.store = tfa98xx_blackbox_store,
 };
 
+static struct device_attribute dev_attr_blackbox2 = {
+	.attr = {
+		.name = "log2",
+		.mode = 0600,
+	},
+	.show = tfa98xx_blackbox2_show,
+	.store = tfa98xx_blackbox2_store,
+};
+
 static struct device_attribute dev_attr_gain = {
 	.attr = {
 		.name = "gain",
@@ -5538,7 +5643,11 @@ int tfa98xx_set_blackbox(int enable)
 	if (tfa->is_configured > 0) {
 		pr_info("%s: set blackbox directly\n", __func__);
 		tfa->individual_msg = 1;
+#if defined(TFA_SUPPORT_NEW_DATALOGGER)
+		ret = tfa_configure_log2(enable);
+#else
 		ret = tfa_configure_log(enable);
+#endif
 	}
 
 	return ret;
@@ -6081,6 +6190,12 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 	tfa98xx->tfa->cachep = tfa98xx_cache;
 	mutex_unlock(&tfa98xx_mutex);
 
+	if (ret == 0) {
+		tfa98xx->probe_state |= TFA98XX_PROBE_STATE_I2C_INIT_SUCCESS;
+	} else {
+		dev_err(&i2c->dev, "[0x%x] I2C,GPIO init failed %d\n", i2c->addr, ret);
+	}
+
 #if defined(TFA_PLATFORM_QUALCOMM)
 	tfa98xx->tfa->dummy_cal= DUMMY_CALIBRATION_DATA;
 #endif
@@ -6145,6 +6260,12 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 		goto tfa98xx_i2c_probe_exit;
 	}
 
+	if (ret == 0) {
+		tfa98xx->probe_state |= TFA98XX_PROBE_STATE_DAI_INIT_SUCCESS;
+	} else {
+		dev_err(&i2c->dev, "[0x%x] DAI init failed %d\n", i2c->addr, ret);
+	}
+
 	if (gpio_is_valid(tfa98xx->irq_gpio) &&
 		!(tfa98xx->flags & TFA98XX_FLAG_SKIP_INTERRUPTS)) {
 		/* register irq handler */
@@ -6190,6 +6311,10 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 	ret = device_create_file(&i2c->dev, &dev_attr_blackbox);
 	if (ret)
 		dev_info(&i2c->dev, "error creating sysfs node, log\n");
+
+	ret = device_create_file(&i2c->dev, &dev_attr_blackbox2);
+	if (ret)
+		dev_info(&i2c->dev, "error creating sysfs node, log2\n");
 
 	ret = device_create_file(&i2c->dev, &dev_attr_gain);
 	if (ret)
@@ -6285,6 +6410,37 @@ tfa98xx_i2c_probe_exit:
 tfa98xx_i2c_probe_fail:
 	return ret;
 }
+
+/*
+ * Top: dev_idx=0, Bottom: dev_idx=1
+ * Return value:
+ *** 0x1 : I2C init. success
+ *** 0x2 : DAI init. success
+ *** 0x4 : Container loading success
+ *** 0x7 : All success
+ *** -1 : Init. fail
+ */
+int tfa98xx_get_init_state(int dev_idx)
+{
+	int ret = -1;
+	struct tfa98xx *tfa98xx;
+
+	pr_info("%s: device index %d\n", __func__, dev_idx);
+	list_for_each_entry(tfa98xx, &tfa98xx_device_list, list) {
+		if (dev_idx == tfa98xx->tfa->dev_idx)
+			break;
+	}
+
+	pr_info("%s: probe_state %d\n", __func__, tfa98xx->probe_state);
+	if (tfa98xx) {
+		ret = tfa98xx->probe_state;
+		if (tfa98xx->probe_state == 0x0)
+			ret = -1;
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL(tfa98xx_get_init_state);
 
 #if KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE
 static void tfa98xx_i2c_remove(struct i2c_client *i2c)

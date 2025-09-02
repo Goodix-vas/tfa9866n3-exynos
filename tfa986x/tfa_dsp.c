@@ -292,11 +292,14 @@ int tfa_irq_report(struct tfa_device *tfa)
 				__func__, tfa->dev_idx,
 				tfa98xx_irq_names[irq].irq_name,
 				tfa98xx_irq_info[irq]);
-			if (irq != tfa9866_irq_stnoclk
-				|| !tfa->blackbox_enable || tfa0 == NULL)
-				continue;
-			group = tfa->dev_idx * ID_BLACKBOX_MAX;
-			tfa0->log_data[group + ID_NOCLK_COUNT]++;
+			if (tfa0 && irq == tfa9866_irq_stnoclk) {
+				group = tfa->dev_idx * ID_BLACKBOX_MAX;
+				tfa0->log_data[group + ID_NOCLK_COUNT]++;
+			}
+			if (tfa0 && irq == tfa9866_irq_stocpr) {
+				group = tfa->dev_idx * ID_BLACKBOX_MAX;
+				tfa0->log_data[group + ID_OCP_COUNT]++;
+			}
 		}
 
 	/* clear active irqs */
@@ -355,6 +358,7 @@ void tfa_set_query_info(struct tfa_device *tfa)
 	memset(tfa->log_data, 0, LOG_BUFFER_SIZE * sizeof(int));
 	tfa->irq_all = 0;
 	tfa->irq_max = 0;
+	tfa->send_set_logger = 0; /* Do not send SetDataLogger as it will be added in CNT */
 
 	/* TODO use the getfeatures() for retrieving the features [artf103523]
 	 * tfa->support_drc = SUPPORT_NOT_SET;
@@ -2091,11 +2095,10 @@ enum tfa98xx_error tfa_set_calibration_values(struct tfa_device *tfa)
 			pr_info("%s: copy cal from active dev 0x%x (channel %d)\n",
 				__func__, tfa->active_handle,
 				active_channel);
-			for (i = 0; i < MAX_CHANNELS; i++)
-				/* copy if not set */
-				if (dsp_cal_value[i] == -1)
-					dsp_cal_value[i]
-						= dsp_cal_value[active_channel];
+			if (tfa->active_handle == 1)
+				dsp_cal_value[1] = dsp_cal_value[0];
+			else if(tfa->active_handle == 2)
+				dsp_cal_value[0] = dsp_cal_value[1];
 		}
 
 		/* We have to copy it for both channels. Even when MONO! */
@@ -2110,7 +2113,11 @@ enum tfa98xx_error tfa_set_calibration_values(struct tfa_device *tfa)
 		if (tfa->blackbox_enable) {
 			/* set logging once before configuring */
 			pr_info("%s: set blackbox logging\n", __func__);
+#if defined(TFA_SUPPORT_NEW_DATALOGGER)
+			tfa_configure_log2(tfa->blackbox_enable);
+#else
 			tfa_configure_log(tfa->blackbox_enable);
+#endif
 		}
 	} else { /* calibration is required */
 		pr_info("%s: config ResetRe25C to do calibration\n", __func__);
@@ -3511,7 +3518,7 @@ enum tfa_error tfa_dev_stop(struct tfa_device *tfa)
 	enum tfa98xx_error err = TFA98XX_ERROR_OK;
 	int ramp_steps;
 
-	pr_debug("Stopping device [%s]\n",
+	pr_info("Stopping device [%s]\n",
 		tfa_cont_device_name(tfa->cnt, tfa->dev_idx));
 
 	/* mute */
@@ -3528,7 +3535,9 @@ enum tfa_error tfa_dev_stop(struct tfa_device *tfa)
 	/* powerdown CF */
 	err = tfa98xx_powerdown(tfa, 1);
 	if (err != TFA98XX_ERROR_OK)
-		return tfa_error_other;
+		goto tfa_dev_stop_exit;
+
+	msleep_interruptible(BUSLOAD_INTERVAL);
 
 	/* CHECK: only once after buffering fully */
 	/* at last device only: to flush buffer */
@@ -3560,9 +3569,17 @@ enum tfa_error tfa_dev_stop(struct tfa_device *tfa)
 		tfa_reset_active_handle(tfa);
 	}
 
-	if (err != TFA98XX_ERROR_OK)
+tfa_dev_stop_exit:
+	if (err != TFA98XX_ERROR_OK) {
 		ret = tfa_convert_error_code(err);
+		pr_err("%s: error (%d) in device stop\n",
+				__func__, ret);
+	}
 
+	/* TFA AMP Off is done */
+	// notify_amp_off_done(tfa->dev_idx); // top:0, bottom:1
+
+	pr_info("%s: Done\n", __func__);
 	return ret;
 }
 
@@ -4165,6 +4182,9 @@ int tfa_dev_probe(int resp_addr, struct tfa_device *tfa)
 		tfa->dev_count--;
 	}
 
+	pr_info("%s: dev %d - resp_addr 0x%x\n",
+		__func__, tfa->dev_idx, tfa->resp_address);
+
 	revid = (unsigned int)rev;
 	if (((rev & 0xff) == 0x66)
 		&& (tfa_get_bf(tfa, 0xf3b1) == 1)) { /* type */
@@ -4718,10 +4738,7 @@ enum tfa98xx_error tfa_configure_log(int enable)
 	if (tfa == NULL)
 		return TFA98XX_ERROR_DEVICE; /* unused device */
 
-	pr_info("%s: set blackbox control (%d)\n",
-		__func__, enable);
-
-	if (!tfa->is_bypass) {
+	if (!tfa->is_bypass && tfa->send_set_logger) {
 		cmd_buf[0] = 0;
 		cmd_buf[1] = 0;
 		/* 0 - disable logger, 1 - enable logger */
@@ -4737,8 +4754,50 @@ enum tfa98xx_error tfa_configure_log(int enable)
 			return err;
 		}
 	} else {
-		pr_info("%s: skip but store setting (%d) in bypass\n",
+		pr_info("%s: skip to send SetDataLogger %d, %d\n",
+			__func__, tfa->is_bypass, tfa->send_set_logger);
+	}
+
+	tfa->blackbox_enable = enable;
+
+	return err;
+}
+
+enum tfa98xx_error tfa_configure_log2(int enable)
+{
+	enum tfa98xx_error err = TFA98XX_ERROR_OK;
+	struct tfa_device *tfa = NULL;
+	uint8_t cmd_buf[6];
+
+	/* set head device */
+	tfa = tfa98xx_get_tfa_device_from_index(-1);
+	if (tfa == NULL)
+		return TFA98XX_ERROR_DEVICE; /* unused device */
+
+	pr_info("%s: set blackbox control (%d)\n",
+		__func__, enable);
+
+	if (!tfa->is_bypass && tfa->send_set_logger) {
+		cmd_buf[0] = 0x80;
+		cmd_buf[1] = 0;
+		cmd_buf[2] = 1;
+		cmd_buf[3] = 0;
+		cmd_buf[4] = 0;
+		/* 0 - disable logger, 1 - enable logger */
+		cmd_buf[5] = (enable) ? 1 : 0;
+
+		pr_info("%s: set blackbox (%d)\n",
 			__func__, enable);
+		err = tfa_dsp_cmd_id_write(tfa, MODULE_SPEAKERBOOST,
+			SB_PARAM_SET_DATA_LOGGER2, 6, cmd_buf);
+		if (err) {
+			pr_err("%s: error in setting blackbox, err = %d\n",
+				__func__, err);
+			return err;
+		}
+	} else {
+		pr_info("%s: skip to send SetDataLogger %d, %d\n",
+			__func__, tfa->is_bypass, tfa->send_set_logger);
 	}
 
 	tfa->blackbox_enable = enable;
@@ -4852,6 +4911,134 @@ enum tfa98xx_error tfa_update_log(void)
 		pr_info("%s: dev %d - blackbox: data[%d] = %d\n",
 			__func__, idx, ID_MAXT_KEEP_LOG,
 			tfa->log_data[group + ID_MAXT_KEEP_LOG]);
+	}
+
+	return err;
+}
+
+enum tfa98xx_error tfa_update_log2(void)
+{
+	enum tfa98xx_error err = TFA98XX_ERROR_OK;
+	struct tfa_device *tfa = NULL, *ntfa = NULL;
+	int ndev, idx, offset, group;
+	uint8_t cmd_buf[((TFA_LOG2_MAX_COUNT * MAX_CHANNELS) + 1) * 3] = {0};
+	int data[(TFA_LOG2_MAX_COUNT * MAX_CHANNELS) + 1] = {0};
+	int read_size;
+
+	/* set head device */
+	tfa = tfa98xx_get_tfa_device_from_index(-1);
+	if (tfa == NULL)
+		return TFA98XX_ERROR_DEVICE; /* unused device */
+
+	if (!tfa->blackbox_enable) {
+		pr_info("%s: blackbox is inactive\n", __func__);
+		return err;
+	}
+
+	ndev = tfa->dev_count;
+	if (ndev < 1)
+		return TFA98XX_ERROR_DEVICE;
+
+	read_size = ((TFA_LOG2_MAX_COUNT * ndev) + 1) * 3;
+
+	pr_info("%s: read from blackbox\n", __func__);
+	err = tfa_dsp_cmd_id_write_read(tfa, MODULE_SPEAKERBOOST,
+		SB_PARAM_GET_DATA_LOGGER2, read_size, cmd_buf);
+	if (err) {
+		pr_err("%s: failed to read data from blackbox, err = %d\n",
+			__func__, err);
+		return err;
+	}
+
+	tfa98xx_convert_bytes2data(read_size, cmd_buf, data);
+	pr_info("%s: DataLogger command version 0x%x\n", __func__, data[0]);
+
+	for (idx = 0; idx < ndev; idx++) {
+		ntfa = tfa98xx_get_tfa_device_from_index(idx);
+
+		if (ntfa == NULL)
+			continue;
+		if (!tfa_is_active_device(ntfa))
+			continue;
+
+		offset = 1 + (idx * TFA_LOG2_MAX_COUNT);
+		group = idx * ID_BLACKBOX_MAX;
+
+		/* maximum x (um) */
+		data[offset + ID2_MAXX_LOG] = (int)
+			((unsigned int)data[offset + ID2_MAXX_LOG]
+			/ TFA2_FW_X_DATA_UM_SCALE);
+		if (tfa->log_data[group + ID_MAXX_LOG]
+			< data[offset + ID2_MAXX_LOG])
+			tfa->log_data[group + ID_MAXX_LOG]
+				= data[offset + ID2_MAXX_LOG];
+
+		pr_info("%s: dev %d - blackbox: data[%d] = %d (<- %d)\n",
+				__func__, idx, ID_MAXX_LOG,
+				tfa->log_data[group + ID_MAXX_LOG],
+				data[offset + ID2_MAXX_LOG]);
+
+		/* maximum x kept without reset */
+		if (tfa->log_data[group + ID_MAXX_KEEP_LOG]
+			< data[offset + ID2_MAXX_LOG])
+			tfa->log_data[group + ID_MAXX_KEEP_LOG]
+				= data[offset + ID2_MAXX_LOG];
+
+		/* maximum t (degC) */
+		data[offset + ID2_MAXT_LOG] = (int)
+			(data[offset + ID2_MAXT_LOG]
+			/ TFA2_FW_T_DATA_SCALE);
+		if (tfa->log_data[group + ID_MAXT_LOG]
+			< data[offset + ID2_MAXT_LOG])
+			tfa->log_data[group + ID_MAXT_LOG]
+				= data[offset + ID2_MAXT_LOG];
+
+		pr_info("%s: dev %d - blackbox: data[%d] = %d (<- %d)\n",
+				__func__, idx, ID_MAXT_LOG,
+				tfa->log_data[group + ID_MAXT_LOG],
+				data[offset + ID2_MAXT_LOG]);
+
+		/* maximum t kept without reset */
+		if (tfa->log_data[group + ID_MAXT_KEEP_LOG]
+			< data[offset + ID2_MAXT_LOG])
+			tfa->log_data[group + ID_MAXT_KEEP_LOG]
+				= data[offset + ID2_MAXT_LOG];
+
+		/* counter of x > x_max */
+		tfa->log_data[group + ID_OVERXMAX_COUNT]
+			+= data[offset + ID2_OVERXMAX_COUNT];
+
+		pr_info("%s: dev %d - blackbox: data[%d] = %d (<- %d)\n",
+				__func__, idx, ID_OVERXMAX_COUNT,
+				tfa->log_data[group + ID_OVERXMAX_COUNT],
+				data[offset + ID2_OVERXMAX_COUNT]);
+
+		/* counter of t > t_max */
+		tfa->log_data[group + ID_OVERTMAX_COUNT]
+			+= data[offset + ID2_OVERTMAX_COUNT];
+
+		pr_info("%s: dev %d - blackbox: data[%d] = %d (<- %d)\n",
+				__func__, idx, ID_OVERTMAX_COUNT,
+				tfa->log_data[group + ID_OVERTMAX_COUNT],
+				data[offset + ID2_OVERTMAX_COUNT]);
+
+		pr_info("%s: dev %d - blackbox: data[%d] = %d\n",
+			__func__, idx, ID_MAXX_KEEP_LOG,
+			tfa->log_data[group + ID_MAXX_KEEP_LOG]);
+		pr_info("%s: dev %d - blackbox: data[%d] = %d\n",
+			__func__, idx, ID_MAXT_KEEP_LOG,
+			tfa->log_data[group + ID_MAXT_KEEP_LOG]);
+
+		pr_info("%s: dev %d - blackbox: [MuteIC = %d, MuteOC = %d, OpenC = %d]\n",
+			__func__, idx,
+			data[offset + ID2_MUTEIN_COUNT],
+			data[offset + ID2_MUTEOUT_COUNT],
+			data[offset + ID2_OPEN_CIRCUIT]);
+	
+		pr_info("%s: dev %d - blackbox: [OCPC = %d, NOCLKC = %d]\n",
+			__func__, idx,
+			tfa->log_data[group + ID_OCP_COUNT],
+			tfa->log_data[group + ID_NOCLK_COUNT]);
 	}
 
 	return err;

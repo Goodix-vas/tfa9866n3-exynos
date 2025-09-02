@@ -17,6 +17,7 @@
 
 /* ---------------------------------------------------------------------- */
 
+#if !defined(TFA_PLATFORM_QUALCOMM)
 static ssize_t spkt_show(struct device *dev,
 	struct device_attribute *attr, char *buf);
 static ssize_t spkt_store(struct device *dev,
@@ -28,8 +29,22 @@ static ssize_t sknt_show(struct device *dev,
 static ssize_t sknt_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size);
 static DEVICE_ATTR_RW(sknt);
+#endif
+
+static ssize_t power_state_show(struct device *dev,
+	struct device_attribute *attr, char *buf);
+static ssize_t power_state_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size);
+static DEVICE_ATTR_RW(power_state);
+
+static ssize_t ocp_noclk_show(struct device *dev,
+	struct device_attribute *attr, char *buf);
+static ssize_t ocp_noclk_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size);
+static DEVICE_ATTR_RW(ocp_noclk);
 
 #if defined(TFA_STEREO_NODE)
+#if !defined(TFA_PLATFORM_QUALCOMM)
 static ssize_t spkt_r_show(struct device *dev,
 	struct device_attribute *attr, char *buf);
 static ssize_t spkt_r_store(struct device *dev,
@@ -41,14 +56,27 @@ static ssize_t sknt_r_show(struct device *dev,
 static ssize_t sknt_r_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size);
 static DEVICE_ATTR_RW(sknt_r);
+#endif
+static ssize_t power_state_r_show(struct device *dev,
+	struct device_attribute *attr, char *buf);
+static ssize_t power_state_r_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size);
+static DEVICE_ATTR_RW(power_state_r);
 #endif /* TFA_STEREO_NODE */
 
 static struct attribute *tfa_stc_attr[] = {
+#if !defined(TFA_PLATFORM_QUALCOMM)
 	&dev_attr_spkt.attr,
 	&dev_attr_sknt.attr,
+#endif
+	&dev_attr_power_state.attr,
+	&dev_attr_ocp_noclk.attr,
 #if defined(TFA_STEREO_NODE)
+#if !defined(TFA_PLATFORM_QUALCOMM)
 	&dev_attr_spkt_r.attr,
 	&dev_attr_sknt_r.attr,
+#endif
+	&dev_attr_power_state_r.attr,
 #endif /* TFA_STEREO_NODE */
 	NULL,
 };
@@ -61,6 +89,7 @@ static struct attribute_group tfa_stc_attr_grp = {
 
 static struct device *tfa_stc_dev;
 
+#if !defined(TFA_PLATFORM_QUALCOMM)
 static int sknt_data[MAX_HANDLES];
 
 /* ---------------------------------------------------------------------- */
@@ -174,8 +203,90 @@ static ssize_t sknt_store(struct device *dev,
 
 	return size;
 }
+#endif
+
+static ssize_t power_state_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	int idx = tfa_get_dev_idx_from_inchannel(0);
+	int value, size;
+	char pstate_result[FILESIZE_STC] = {0};
+
+	value = tfa_get_power_state(idx);
+	pr_info("%s: tfa_stc - dev %d - power state (%d)\n",
+		__func__, idx, value);
+
+	snprintf(pstate_result, FILESIZE_STC,
+		"%d", value);
+
+	if (pstate_result[0] == 0)
+		size = snprintf(buf, 1 + 1, "0"); /* no data */
+	else
+		size = snprintf(buf, strlen(pstate_result) + 1,
+			"%s", pstate_result);
+
+	if (size <= 0) {
+		pr_err("%s: tfa_stc failed to show in sysfs file\n", __func__);
+		return -EINVAL;
+	}
+
+	return size;
+}
+
+static ssize_t power_state_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	pr_info("%s: dev %d - not allowed to write power state\n",
+		__func__, tfa_get_dev_idx_from_inchannel(0));
+
+	return size;
+}
+
+static ssize_t ocp_noclk_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	int count = 0;
+	int idx, ndev, offset;
+	struct tfa_device *tfa0 = NULL;
+
+	/* set main device */
+	tfa0 = tfa98xx_get_tfa_device_from_index(-1);
+	if (tfa0 == NULL) {
+		pr_err("%s: head device not found\n", __func__);
+		return -EINVAL;
+	}
+	ndev = tfa0->dev_count;
+
+	for (idx = 0; idx < ndev; idx++) {
+		offset = idx * ID_BLACKBOX_MAX;
+		pr_info("%s: dev %d - ocp cnt %d, noclk cnt %d\n",
+			__func__, idx,
+			tfa0->log_data[offset + ID_OCP_COUNT],
+			tfa0->log_data[offset + ID_NOCLK_COUNT]);
+		if (idx == (ndev-1)) {
+			count += snprintf(buf + strlen(buf), PAGE_SIZE,
+				"%d,%d",
+				tfa0->log_data[offset + ID_OCP_COUNT],
+				tfa0->log_data[offset + ID_NOCLK_COUNT]);
+		} else {
+			count += snprintf(buf + strlen(buf), PAGE_SIZE,
+				"%d,%d,",
+				tfa0->log_data[offset + ID_OCP_COUNT],
+				tfa0->log_data[offset + ID_NOCLK_COUNT]);
+		}
+	}
+
+	return count;
+}
+
+static ssize_t ocp_noclk_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	return size;
+}
 
 #if defined(TFA_STEREO_NODE)
+#if !defined(TFA_PLATFORM_QUALCOMM)
 static ssize_t spkt_r_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -252,6 +363,44 @@ static ssize_t sknt_r_store(struct device *dev,
 		pr_err("%s: tfa_stc dev %d - error %d\n",
 			__func__, idx, ret);
 	}
+
+	return size;
+}
+#endif
+
+static ssize_t power_state_r_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	int idx = tfa_get_dev_idx_from_inchannel(1);
+	int value, size;
+	char pstate_result[FILESIZE_STC] = {0};
+
+	value = tfa_get_power_state(idx);
+	pr_info("%s: tfa_stc - dev %d - power state (%d)\n",
+		__func__, idx, value);
+
+	snprintf(pstate_result, FILESIZE_STC,
+		"%d", value);
+
+	if (pstate_result[0] == 0)
+		size = snprintf(buf, 1 + 1, "0"); /* no data */
+	else
+		size = snprintf(buf, strlen(pstate_result) + 1,
+			"%s", pstate_result);
+
+	if (size <= 0) {
+		pr_err("%s: tfa_stc failed to show in sysfs file\n", __func__);
+		return -EINVAL;
+	}
+
+	return size;
+}
+
+static ssize_t power_state_r_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	pr_info("%s: dev %d - not allowed to write power state\n",
+		__func__, tfa_get_dev_idx_from_inchannel(1));
 
 	return size;
 }

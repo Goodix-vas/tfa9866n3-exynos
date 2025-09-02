@@ -54,12 +54,30 @@ enum tfa98xx_blackbox_id {
 	ID_OVERXMAX_COUNT = 2,
 	ID_OVERTMAX_COUNT = 3,
 	/* device section */
-	ID_I2CERR_COUNT,
+	ID_OCP_COUNT,
 	ID_NOCLK_COUNT,
 	/* maintenance section */
 	ID_MAXX_KEEP_LOG,
 	ID_MAXT_KEEP_LOG,
 	ID_BLACKBOX_MAX
+};
+
+enum tfa98xx_blackbox2_id {
+	/* algorithm section */
+	ID2_MUTEIN_COUNT = 0,
+	ID2_MUTEOUT_COUNT = 1,
+	ID2_OPEN_CIRCUIT = 2,
+	ID2_OVERTMAX_COUNT = 3,
+	ID2_OVERXMAX_COUNT = 4,
+	ID2_MAXT_LOG = 5,
+	ID2_MAXX_LOG = 6,
+	/* device section */
+	ID2_OCP_COUNT,
+	ID2_NOCLK_COUNT,
+	/* maintenance section */
+	ID2_MAXX_KEEP_LOG,
+	ID2_MAXT_KEEP_LOG,
+	ID2_BLACKBOX_MAX
 };
 
 #define MAX_ID_BLACKBOX_TO_RESET ID_MAXX_KEEP_LOG
@@ -85,5 +103,6 @@ int tfa98xx_update_spkt_data(int idx);
 int tfa98xx_update_spkt_data_channel(int channel);
 int tfa98xx_write_sknt_control(int idx, int value);
 int tfa98xx_write_sknt_control_channel(int channel, int value);
+int tfa98xx_get_init_state(int dev_idx);
 
 #endif /* TFA_SRC_TFA_EXT_H_ */
