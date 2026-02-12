@@ -465,7 +465,8 @@ static enum tfa98xx_error tfa986x_specific(struct tfa_device *tfa)
 		/* ----- generated code end   ----- */
 		break;
 
-	case 0x201a66:/**TFA9866 N3A1**/		
+	case 0x201a66:/**TFA9866 N3A1**/
+	case 0x203a66:/**TFA9866 N3A3Var**/
 		bf_value = tfa_get_bf(tfa, TFA9866_BF_SPARE_F0_15_10);
 		if (bf_value >= 0)
 			tfa_set_bf(tfa, TFA9866_BF_CS_KTEMP, (uint16_t)bf_value);
