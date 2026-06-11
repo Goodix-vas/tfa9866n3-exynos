@@ -4991,7 +4991,9 @@ static ssize_t tfa98xx_reinit_show(struct device *dev,
 		return -EIO;
 	}
 
+	mutex_lock(&probe_lock);
 	init_requests = tfa98xx_cnt_reload;
+	mutex_unlock(&probe_lock);
 
 	pr_debug("[0x%x] reinit : counter %d\n",
 		tfa98xx->i2c->addr, init_requests);
@@ -5033,8 +5035,10 @@ static ssize_t tfa98xx_reinit_store(struct device *dev,
 	pr_info("%s: reinit < %d\n", __func__, reinit);
 
 	if (reinit) {
+		mutex_lock(&probe_lock);
 		pr_info("%s: started reloading / reinitializing (counter %d)\n",
 			__func__, tfa98xx_cnt_reload + 1);
+		mutex_unlock(&probe_lock);
 		tfa98xx_set_cnt_reload(NULL, NULL);
 	}
 
