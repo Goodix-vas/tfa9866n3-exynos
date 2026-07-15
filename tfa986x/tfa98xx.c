@@ -51,6 +51,7 @@
 #endif
 
 #define I2C_RETRIES 50
+#define I2C_1ST_ACCESS_RETRIES 10
 #define I2C_RETRY_DELAY 5 /* ms */
 #define TFA_RESET_DELAY 5 /* ms */
 
@@ -82,6 +83,7 @@ static DEFINE_MUTEX(probe_lock);
 static DEFINE_MUTEX(overlay_lock);
 static LIST_HEAD(tfa98xx_device_list);
 static int tfa98xx_device_count;
+static int tfa_probed_device_cnt = 0;
 static struct tfa98xx *tfa98xx_head_device;
 static int tfa98xx_sync_count;
 static int tfa98xx_monitor_count;
@@ -703,34 +705,87 @@ static ssize_t tfa98xx_dbgfs_dsp_state_set(struct file *file,
 	return count;
 }
 
+#define MAX_STATE_STR_LEN 192
 static ssize_t tfa98xx_dbgfs_fw_state_get(struct file *file,
 	char __user *user_buf, size_t count, loff_t *ppos)
 {
 	struct i2c_client *i2c = file->private_data;
 	struct tfa98xx *tfa98xx = i2c_get_clientdata(i2c);
-	char *str;
+	struct tfa_device *tfa = NULL;
+	enum tfa98xx_error err = TFA98XX_ERROR_OK;
+	size_t ret_size = 0;
+	char *str = NULL;
+
+	str = kmalloc(MAX_STATE_STR_LEN, GFP_KERNEL);
+	if (str == NULL) {
+		pr_err("[0x%x] can not allocate memory\n", tfa98xx->i2c->addr);
+		return -ENOMEM;
+	}
+	memset(str, 0, MAX_STATE_STR_LEN);
 
 	switch (tfa98xx->dsp_fw_state) {
 	case TFA98XX_DSP_FW_NONE:
-		str = "None\n";
+		strncpy(str, "None\n", MAX_STATE_STR_LEN);
 		break;
 	case TFA98XX_DSP_FW_PENDING:
-		str = "Pending\n";
+		strncpy(str, "Pending\n", MAX_STATE_STR_LEN);
 		break;
 	case TFA98XX_DSP_FW_FAIL:
-		str = "Fail\n";
+		strncpy(str, "Fail\n", MAX_STATE_STR_LEN);
 		break;
 	case TFA98XX_DSP_FW_OK:
-		str = "Ok\n";
+		strncpy(str, "Ok\n", MAX_STATE_STR_LEN);
 		break;
 	default:
-		str = "Invalid\n";
+		strncpy(str, "Invalid\n", MAX_STATE_STR_LEN);
 		break;
 	}
+	pr_info("[0x%x] dsp_fw_state : %s", tfa98xx->i2c->addr, str);
 
-	pr_debug("[0x%x] fw_state : %s", tfa98xx->i2c->addr, str);
+	tfa = tfa98xx->tfa;
+	if (tfa98xx->pstream != 0 && tfa != NULL &&
+		tfa->is_configured > 0) {
+		unsigned char read_buf[2 * 3] = {0};
+		int fw_status[2] = {0};
+		int event, status, len = 0;
+		err = tfa_dsp_cmd_id_write_read(tfa, MODULE_FRAMEWORK,
+			FW_PAR_ID_GET_STATUS_CHANGE,
+			sizeof(read_buf), read_buf);
+		if (err == TFA98XX_ERROR_OK) {
+			tfa98xx_convert_bytes2data(sizeof(read_buf),
+				read_buf, fw_status);
+			event = fw_status[0];
+			status = fw_status[1];
+			pr_info("[0x%x] fw_event 0x%x, fw_status 0x%x\n",
+				tfa98xx->i2c->addr,	event, status);
 
-	return simple_read_from_buffer(user_buf, count, ppos, str, strlen(str));
+			len += snprintf(str + len, MAX_STATE_STR_LEN - len,
+				"event=0x%x,status=0x%x : ", fw_status[0], fw_status[1]);
+			if (((event & TFADSP_FLAG_CALIBRATE_DONE) != 0) &&
+				((status & TFADSP_FLAG_CALIBRATE_DONE) != 0))
+				len += snprintf(str + len, MAX_STATE_STR_LEN - len, "CALIBRATE_DONE, ");
+			if ((event & TFADSP_FLAG_DAMAGED_SPEAKER_P) != 0)
+				len += snprintf(str + len, MAX_STATE_STR_LEN - len, "DAMAGED_SPEAKER_P, ");
+			if ((event & TFADSP_FLAG_DAMAGED_SPEAKER_S) != 0)
+				len += snprintf(str + len, MAX_STATE_STR_LEN - len, "DAMAGED_SPEAKER_S, ");
+			if ((event & TFADSP_FLAG_DAMAGED_VSENSE_P) != 0)
+				len += snprintf(str + len, MAX_STATE_STR_LEN - len, "DAMAGED_VSENSE_P, ");
+			if ((event & TFADSP_FLAG_DAMAGED_VSENSE_S) != 0)
+				len += snprintf(str + len, MAX_STATE_STR_LEN - len, "DAMAGED_VSENSE_S, ");
+			if ((event & TFADSP_FLAG_DAMAGED_FRES_P) != 0)
+				len += snprintf(str + len, MAX_STATE_STR_LEN - len, "DAMAGED_FRES_P, ");
+			if ((event & TFADSP_FLAG_DAMAGED_FRES_S) != 0)
+				len += snprintf(str + len, MAX_STATE_STR_LEN - len, "DAMAGED_FRES_S, ");
+			if ((event & TFADSP_FLAG_PILOT_TONE_MUTED_P) != 0)
+				len += snprintf(str + len, MAX_STATE_STR_LEN - len, "PILOT_TONE_MUTED_P, ");
+			if ((event & TFADSP_FLAG_PILOT_TONE_MUTED_S) != 0)
+				len += snprintf(str + len, MAX_STATE_STR_LEN - len, "PILOT_TONE_MUTED_S, ");
+		}
+	}
+
+	ret_size = simple_read_from_buffer(user_buf, count, ppos, str, strlen(str));
+	kfree(str);
+	return ret_size;
 }
 
 static ssize_t tfa98xx_dbgfs_rpc_read(struct file *file,
@@ -872,6 +927,156 @@ static ssize_t tfa98xx_dbgfs_rpc_send(struct file *file,
 	return count;
 }
 /* -- RPC */
+
+#define MAX_MEMTRACK_ITEMS 20
+static int g_mm_count = 0;
+
+static ssize_t tfa98xx_dbgfs_memtrack_read(struct file *file,
+	char __user *user_buf, size_t count, loff_t *ppos)
+{
+	struct i2c_client *i2c = file->private_data;
+	struct tfa98xx *tfa98xx = i2c_get_clientdata(i2c);
+	enum tfa98xx_error error;
+	struct tfa_device *tfa = NULL;
+	uint8_t *buf24;
+	int buf24_len = 0, i = 0, pos = 0;
+	int memtrack_data[MAX_MEMTRACK_ITEMS+1] = {0}; /* interval + memtracks */
+	char memtrack_str[(MAX_MEMTRACK_ITEMS+1)*10] = {0};
+	int max_mm_str_len = (MAX_MEMTRACK_ITEMS+1)*10;
+
+	if (*ppos != 0)
+		return 0;
+
+	if (tfa98xx->tfa == NULL) {
+		pr_err("[0x%x] tfa is not available\n", tfa98xx->i2c->addr);
+		return -ENODEV;
+	}
+	tfa = tfa98xx->tfa;
+
+	if (count == 0)
+		return 0;
+
+	if (tfa98xx->pstream == 0 || tfa->is_configured <= 0) {
+		pr_info("[0x%x] skipped - tfadsp is not active!\n", tfa98xx->i2c->addr);
+		return count;
+	}
+
+	pr_info("[0x%x] g_mm_count %d\n", tfa98xx->i2c->addr, g_mm_count);
+
+	if (g_mm_count > MAX_MEMTRACK_ITEMS)
+		g_mm_count = MAX_MEMTRACK_ITEMS;
+	buf24_len = (g_mm_count+1) * 3;
+	buf24 = kmalloc(buf24_len, GFP_KERNEL);
+	if (buf24 == NULL) {
+		pr_err("[0x%x] can not allocate memory\n", tfa98xx->i2c->addr);
+		return -ENOMEM;
+	}
+
+	error = tfa_dsp_cmd_id_write_read(tfa, MODULE_FRAMEWORK,
+		FW_PAR_ID_GET_MEMTRACK,	buf24_len, buf24);
+	if (error == TFA98XX_ERROR_OK)
+		tfa98xx_convert_bytes2data(buf24_len, buf24, memtrack_data);
+	else
+		pr_err("[0x%x] tfa_dsp_cmd_id_write_read error: %d\n",
+			tfa98xx->i2c->addr, error);
+	kfree(buf24);
+
+	for (i = 0; i < g_mm_count+1; i++) {
+		if (i == 0)
+			pos += snprintf(memtrack_str + pos, max_mm_str_len - pos,
+				"0x%06x", memtrack_data[i]);
+		else
+			pos += snprintf(memtrack_str + pos, max_mm_str_len - pos,
+				",0x%06x", memtrack_data[i]);
+	}
+	pos += snprintf(memtrack_str + pos, max_mm_str_len - pos, "\n");
+
+	return simple_read_from_buffer(user_buf, count, ppos, memtrack_str, pos);
+}
+
+static ssize_t tfa98xx_dbgfs_memtrack_send(struct file *file,
+	const char __user *user_buf, size_t count, loff_t *ppos)
+{
+	struct i2c_client *i2c = file->private_data;
+	struct tfa98xx *tfa98xx = i2c_get_clientdata(i2c);
+	enum tfa98xx_error error;
+	struct tfa_device *tfa = NULL;
+	int ret = 0;
+	char *memtrack_str = NULL, *token = NULL, *cur = NULL;
+	int memtrack_items[MAX_MEMTRACK_ITEMS] = {0};
+	int mm_value = 0, i = 0, buf24_len = 0;
+	uint8_t *buf24 = NULL;
+
+	if (tfa98xx->tfa == NULL) {
+		pr_err("[0x%x] tfa is not available\n", tfa98xx->i2c->addr);
+		return -ENODEV;
+	}
+	tfa = tfa98xx->tfa;
+
+	pr_info("[0x%x] count %zu\n", tfa98xx->i2c->addr, count);
+
+	if (count == 0)
+		return 0;
+
+	if (tfa98xx->pstream == 0 || tfa->is_configured <= 0) {
+		pr_info("[0x%x] skipped - tfadsp is not active!\n", tfa98xx->i2c->addr);
+		return count;
+	}
+
+	memtrack_str = kmalloc((MAX_MEMTRACK_ITEMS+2)*3, GFP_KERNEL);
+	if (memtrack_str == NULL) {
+		pr_err("[0x%x] can not allocate memory\n", tfa98xx->i2c->addr);
+		return -ENOMEM;
+	}
+	memset(memtrack_str, 0, (MAX_MEMTRACK_ITEMS+2)*3);
+
+	if (copy_from_user(memtrack_str, user_buf, count)) {
+		kfree(memtrack_str);
+		pr_err("[0x%x] memory copy error\n", tfa98xx->i2c->addr);
+		return -EFAULT;
+	}
+
+	g_mm_count = 0;
+	cur = memtrack_str;
+	while ((token = strsep(&cur, ",")) != NULL) {
+		if (*token == '\0')
+			continue;
+		ret = kstrtoint(token, 0, &mm_value);
+		if (ret)
+			continue;
+
+		if (g_mm_count < MAX_MEMTRACK_ITEMS) {
+			pr_info("[0x%x] memtrack[%d] 0x%x\n", tfa98xx->i2c->addr, g_mm_count, mm_value);
+			memtrack_items[g_mm_count++] = mm_value;
+		}
+		else
+			break;
+	}
+
+	memset(memtrack_str, 0, (MAX_MEMTRACK_ITEMS+2)*3);
+	buf24 = (uint8_t *)memtrack_str;
+	buf24[buf24_len++] = 0x00;
+	buf24[buf24_len++] = (0x80 | MODULE_FRAMEWORK);
+	buf24[buf24_len++] = FW_PAR_ID_SET_MEMTRACK;
+	buf24[buf24_len++] = 0x00;
+	buf24[buf24_len++] = 0x00;
+	buf24[buf24_len++] = (uint8_t)g_mm_count;
+	for (i = 0; i < g_mm_count; i++) {
+		buf24[buf24_len++] = (uint8_t)((memtrack_items[i] & 0xFF0000) >> 16);
+		buf24[buf24_len++] = (uint8_t)((memtrack_items[i] & 0x00FF00) >> 8);
+		buf24[buf24_len++] = (uint8_t)(memtrack_items[i] & 0x0000FF);
+	}
+
+	mutex_lock(&tfa98xx->dsp_lock);
+	tfa->individual_msg = 1;
+	error = dsp_msg(tfa, buf24_len, buf24);
+	if (error != TFA98XX_ERROR_OK)
+		pr_err("[0x%x] dsp_msg error: %d\n", tfa98xx->i2c->addr, error);
+	mutex_unlock(&tfa98xx->dsp_lock);
+
+	kfree(memtrack_str);
+	return count;
+}
 
 /* ++ DSP message fops */
 static ssize_t tfa98xx_dbgfs_dsp_read(struct file *file,
@@ -1257,6 +1462,13 @@ static const struct file_operations tfa98xx_dbgfs_show_cal_fops = {
 	.llseek = default_llseek,
 };
 
+static const struct file_operations tfa98xx_dbgfs_memtrack_fops = {
+	.open = simple_open,
+	.read = tfa98xx_dbgfs_memtrack_read,
+	.write = tfa98xx_dbgfs_memtrack_send,
+	.llseek = default_llseek,
+};
+
 static void tfa98xx_debug_init(struct tfa98xx *tfa98xx, struct i2c_client *i2c)
 {
 	char name[50];
@@ -1285,6 +1497,8 @@ static void tfa98xx_debug_init(struct tfa98xx *tfa98xx, struct i2c_client *i2c)
 		i2c, &tfa98xx_dbgfs_rpc_fops);
 	debugfs_create_file("dsp", 0644, tfa98xx->dbg_dir,
 		i2c, &tfa98xx_dbgfs_dsp_fops);
+	debugfs_create_file("memtrack", 0644, tfa98xx->dbg_dir,
+		i2c, &tfa98xx_dbgfs_memtrack_fops);
 
 	debugfs_create_file("trace-level", 0644,
 		tfa98xx->dbg_dir,
@@ -2735,6 +2949,10 @@ static int tfa98xx_set_cnt_reload(struct snd_kcontrol *kcontrol,
 					TFA_SET_BF(tfa98xx->tfa, MANSCONF, 1);
 			}
 			tfa_set_status_flag(tfa98xx->tfa, TFA_SET_DEVICE, 0);
+			tfa98xx->tfa->inchannel = TFA_GET_BF(tfa98xx->tfa, TDMSPKS);
+			pr_info("%s: dev %d - resp_addr 0x%x, inchannel %d\n",
+				__func__, tfa98xx->tfa->dev_idx,
+				tfa98xx->tfa->resp_address, tfa98xx->tfa->inchannel);
 			mutex_unlock(&tfa98xx->dsp_lock);
 		}
 	}
@@ -3166,7 +3384,8 @@ enum tfa98xx_error tfa98xx_write_register16(struct tfa_device *tfa,
 retry:
 	ret = regmap_write(tfa98xx->regmap, subaddress, value);
 	if (ret < 0) {
-		pr_warn("i2c error, retries left: %d\n", retries);
+		pr_warn("i2c write error at subaddress 0x%x, err %d, retries left: %d\n",
+			subaddress, ret, retries);
 
 		if (retries) {
 			retries--;
@@ -3217,8 +3436,8 @@ enum tfa98xx_error tfa98xx_read_register16(struct tfa_device *tfa,
 retry:
 	ret = regmap_read(tfa98xx->regmap, subaddress, &value);
 	if (ret < 0) {
-		pr_warn("i2c error at subaddress 0x%x, retries left: %d\n",
-			subaddress, retries);
+		pr_warn("i2c read error at subaddress 0x%x, err %d, retries left: %d\n",
+			subaddress, ret, retries);
 
 		if (retries) {
 			retries--;
@@ -3513,6 +3732,10 @@ static void tfa98xx_container_loaded
 				TFA_SET_BF(tfa98xx->tfa, MANSCONF, 1);
 		}
 		tfa_set_status_flag(tfa98xx->tfa, TFA_SET_DEVICE, 0);
+		tfa98xx->tfa->inchannel = TFA_GET_BF(tfa98xx->tfa, TDMSPKS);
+		pr_info("%s: dev %d - resp_addr 0x%x, inchannel %d\n",
+			__func__, tfa98xx->tfa->dev_idx,
+			tfa98xx->tfa->resp_address, tfa98xx->tfa->inchannel);
 		mutex_unlock(&tfa98xx->dsp_lock);
 	}
 
@@ -3676,7 +3899,6 @@ static void tfa98xx_dsp_init(struct tfa98xx *tfa98xx)
 {
 	int ret;
 	static bool failed;
-	bool reschedule = false;
 	bool sync = false;
 	bool do_sync;
 	int active_device_count = tfa98xx_device_count;
@@ -3724,22 +3946,6 @@ static void tfa98xx_dsp_init(struct tfa98xx *tfa98xx)
 	}
 
 	mutex_unlock(&tfa98xx->dsp_lock);
-
-	if (reschedule) {
-		struct tfa98xx *ntfa98xx;
-
-		failed = false;
-
-		/* reschedule this init work for later */
-		list_for_each_entry(ntfa98xx, &tfa98xx_device_list, list) {
-			ntfa98xx->init_count++;
-			pr_info("%s: dsp_init (direct) with device %d, profile %d\n",
-				__func__,
-				ntfa98xx->tfa->dev_idx,
-				ntfa98xx->profile);
-			tfa98xx_dsp_init(ntfa98xx);
-		}
-	}
 
 	if (!sync)
 		return;
@@ -3820,9 +4026,28 @@ static void tfa98xx_interrupt(struct work_struct *work)
 		= container_of(work, struct tfa98xx, interrupt_work.work);
 	struct tfa98xx *tfa98xx;
 	struct tfa_device *tfa;
-	int irq_gpio = tfa98xx0->irq_gpio;
+	int irq_gpio;
 	int value0 = 0, value3 = 0;
+	int dev_cnt = 0;
 
+#if defined(TFA_STEREO_NODE)
+	dev_cnt = 2;
+#else
+	dev_cnt = 1;
+#endif
+
+	if (tfa98xx0 == NULL || tfa98xx0->tfa == NULL) {
+		pr_info("%s: skip as tfa98xx is not ready\n", __func__);
+		return;
+	}
+
+	if (tfa_probed_device_cnt < dev_cnt) {
+		pr_info("%s: skip as tfa_probed_device_cnt %d\n",
+			__func__, tfa_probed_device_cnt);
+		return;
+	}
+
+	irq_gpio = tfa98xx0->irq_gpio;
 	pr_info("%s: triggered: dev %d\n",
 		__func__, tfa98xx0->tfa->dev_idx);
 
@@ -3971,6 +4196,7 @@ static int tfa98xx_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 	struct tfa98xx *tfa98xx
 		= snd_soc_component_get_drvdata(codec_dai->component);
 
+	pr_info("%s: clk_id=%d, freq=%d, dir=%d\n", __func__, clk_id, freq, dir);
 	if (tfa98xx == NULL)
 		return 0;
 
@@ -3981,7 +4207,9 @@ static int tfa98xx_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 static int tfa98xx_set_tdm_slot(struct snd_soc_dai *dai, unsigned int tx_mask,
 	unsigned int rx_mask, int slots, int slot_width)
 {
-	pr_debug("\n");
+	pr_info("%s: tx_mask=%d, rx_mask=%d, slots=%d, slot_width=%d\n", 
+		__func__, tx_mask, rx_mask, slots, slot_width);
+
 	return 0;
 }
 
@@ -4000,8 +4228,13 @@ static int tfa98xx_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
 	case SND_SOC_DAIFMT_I2S:
 	case SND_SOC_DAIFMT_DSP_A:
+#if KERNEL_VERSION(6, 17, 0) <= LINUX_VERSION_CODE
+		if ((fmt & SND_SOC_DAIFMT_MASTER_MASK)
+			!= SND_SOC_DAIFMT_CBC_CFC) {
+#else
 		if ((fmt & SND_SOC_DAIFMT_MASTER_MASK)
 			!= SND_SOC_DAIFMT_CBS_CFS) {
+#endif
 			dev_err(cdev, "Invalid Codec main mode\n");
 			return -EINVAL;
 		}
@@ -4030,7 +4263,6 @@ static int tfa98xx_hw_params(struct snd_pcm_substream *substream,
 	struct tfa98xx *tfa98xx
 		= snd_soc_component_get_drvdata(component);
 	unsigned int rate;
-	int prof_idx;
 	int sample_size;
 	int slot_size;
 
@@ -4046,23 +4278,11 @@ static int tfa98xx_hw_params(struct snd_pcm_substream *substream,
 	if (tfa98xx == NULL || tfa98xx->tfa == NULL)
 		return 0;
 
-	pr_info("%s: forced to change rate: %d to %d\n",
-		__func__, rate, sr_converted);
-	rate = sr_converted;
-
-	/* check if samplerate is supported for this mixer profile */
-	prof_idx = get_profile_id_for_sr(tfa98xx_mixer_profile, rate);
-	if (prof_idx < 0) {
-		pr_err("tfa98xx: invalid sample rate %d.\n", rate);
-		return -EINVAL;
-	}
-	pr_debug("mixer profile:container profile = [%d:%d]\n",
-		tfa98xx_mixer_profile, prof_idx);
-
 	/* update 'real' profile (container profile) */
-	tfa98xx->profile = prof_idx;
+	tfa98xx->profile = tfa98xx_mixer_profile;
 
-	pr_info("%s: tfa98xx_profile %d\n", __func__, tfa98xx->profile);
+	pr_info("%s: dev[%d] tfa98xx_profile %d\n", __func__,
+		tfa98xx->tfa->dev_idx, tfa98xx->profile);
 
 	/* update to new rate */
 	tfa98xx->rate = rate;
@@ -4114,8 +4334,8 @@ static int _tfa98xx_mute(struct tfa98xx *tfa98xx, int mute, int stream)
 		}
 
 		mutex_lock(&tfa98xx->dsp_lock);
-		pr_info("mute:%d [pstream %d, cstream %d]\n",
-			mute, tfa98xx->pstream, tfa98xx->cstream);
+		pr_info("mute:%d dev[%d] stream %d [pstream %d, cstream %d]\n", mute,
+			tfa98xx->tfa->dev_idx, stream, tfa98xx->pstream, tfa98xx->cstream);
 
 		if ((tfa98xx_count_active_stream(BIT_PSTREAM)
 			== tfa98xx_device_count)
@@ -4166,12 +4386,12 @@ static int _tfa98xx_mute(struct tfa98xx *tfa98xx, int mute, int stream)
 		cancel_delayed_work_sync(&tfa98xx->monitor_work);
 
 		/* report the status if interrupt is not enabled */
+		/* Not necessary in the stop sequence
 		if (!gpio_is_valid(tfa98xx->irq_gpio)) {
 			mutex_lock(&tfa98xx->dsp_lock);
 			tfaxx_status(tfa98xx->tfa);
 			mutex_unlock(&tfa98xx->dsp_lock);
-		}
-
+		} */
 		_tfa98xx_stop(tfa98xx);
 	} else {
 		if (stream == SNDRV_PCM_STREAM_PLAYBACK)
@@ -4179,8 +4399,8 @@ static int _tfa98xx_mute(struct tfa98xx *tfa98xx, int mute, int stream)
 		else if (stream == SNDRV_PCM_STREAM_CAPTURE)
 			tfa98xx->cstream = 1;
 		mutex_lock(&tfa98xx->dsp_lock);
-		pr_info("mute:%d [pstream %d, cstream %d]\n",
-			mute, tfa98xx->pstream, tfa98xx->cstream);
+		pr_info("mute:%d dev[%d] stream %d [pstream %d, cstream %d]\n", mute,
+			tfa98xx->tfa->dev_idx, stream, tfa98xx->pstream, tfa98xx->cstream);
 		tfa98xx_set_stream_state(tfa98xx->tfa,
 			(tfa98xx->pstream & BIT_PSTREAM)
 			|((tfa98xx->cstream<<1) & BIT_CSTREAM));
@@ -4310,6 +4530,8 @@ static int tfa98xx_probe(struct snd_soc_component *component)
 	dev_info(cdev, "tfa98xx codec registered (%s)\n",
 		tfa98xx->fw.name);
 
+	tfa_probed_device_cnt++;
+
 	return ret;
 }
 
@@ -4340,9 +4562,12 @@ static void tfa98xx_remove(struct snd_soc_component *component)
 			tfa_buffer_pool(tfa98xx->tfa,
 				index, 0, POOL_FREE);
 	}
+
+	tfa_probed_device_cnt--;
 }
 
 static const struct snd_soc_component_driver soc_component_dev_tfa98xx = {
+	.name = "tfa98xx",
 	.probe = tfa98xx_probe,
 	.remove = tfa98xx_remove,
 };
@@ -4491,6 +4716,7 @@ static int tfa98xx_parse_dummy_cal_dt(struct device *dev,
 	return 0;
 }
 
+#if 0 /* inchannel config was moved to tfa98xx_container_loaded after tfa98xx_tfa_start (with TDMSPKS) */
 static int tfa98xx_parse_inchannel_dt(struct device *dev,
 	struct tfa98xx *tfa98xx, struct device_node *np)
 {
@@ -4517,10 +4743,17 @@ static int tfa98xx_parse_inchannel_dt(struct device *dev,
 
 	return 0;
 }
+#endif
 
+#if KERNEL_VERSION(6, 17, 0) <= LINUX_VERSION_CODE
+static ssize_t tfa98xx_reg_write(struct file *filp, struct kobject *kobj,
+	const struct bin_attribute *bin_attr,
+	char *buf, loff_t off, size_t count)
+#else
 static ssize_t tfa98xx_reg_write(struct file *filp, struct kobject *kobj,
 	struct bin_attribute *bin_attr,
 	char *buf, loff_t off, size_t count)
+#endif
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct tfa98xx *tfa98xx = dev_get_drvdata(dev);
@@ -4537,9 +4770,15 @@ static ssize_t tfa98xx_reg_write(struct file *filp, struct kobject *kobj,
 	return 1;
 }
 
+#if KERNEL_VERSION(6, 17, 0) <= LINUX_VERSION_CODE
+static ssize_t tfa98xx_rw_write(struct file *filp, struct kobject *kobj,
+	const struct bin_attribute *bin_attr,
+	char *buf, loff_t off, size_t count)
+#else
 static ssize_t tfa98xx_rw_write(struct file *filp, struct kobject *kobj,
 	struct bin_attribute *bin_attr,
 	char *buf, loff_t off, size_t count)
+#endif
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct tfa98xx *tfa98xx = dev_get_drvdata(dev);
@@ -4577,9 +4816,15 @@ retry:
 	return ((ret > 1) ? count : -EIO);
 }
 
+#if KERNEL_VERSION(6, 17, 0) <= LINUX_VERSION_CODE
+static ssize_t tfa98xx_rw_read(struct file *filp, struct kobject *kobj,
+	const struct bin_attribute *bin_attr,
+	char *buf, loff_t off, size_t count)
+#else
 static ssize_t tfa98xx_rw_read(struct file *filp, struct kobject *kobj,
 	struct bin_attribute *bin_attr,
 	char *buf, loff_t off, size_t count)
+#endif
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct tfa98xx *tfa98xx = dev_get_drvdata(dev);
@@ -4627,9 +4872,15 @@ retry:
 	return ((ret > 1) ? count : 0);
 }
 
+#if KERNEL_VERSION(6, 17, 0) <= LINUX_VERSION_CODE
+static ssize_t tfa98xx_customer_read(struct file *filp, struct kobject *kobj,
+	const struct bin_attribute *bin_attr,
+	char *buf, loff_t off, size_t count)
+#else
 static ssize_t tfa98xx_customer_read(struct file *filp, struct kobject *kobj,
 	struct bin_attribute *bin_attr,
 	char *buf, loff_t off, size_t count)
+#endif
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct tfa98xx *tfa98xx = dev_get_drvdata(dev);
@@ -4975,76 +5226,6 @@ static ssize_t tfa98xx_autocal_store(struct device *dev,
 	return count;
 }
 
-static ssize_t tfa98xx_reinit_show(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	struct tfa98xx *tfa98xx = dev_get_drvdata(dev);
-	struct tfa_device *tfa = NULL;
-	int count = 0, init_requests = -1;
-
-	tfa = tfa98xx->tfa;
-	if (!tfa)
-		return -ENODEV;
-	if (tfa->tfa_family == 0) {
-		pr_err("[0x%x] %s: system is not initialized: not probed yet!\n",
-			tfa98xx->i2c->addr, __func__);
-		return -EIO;
-	}
-
-	mutex_lock(&probe_lock);
-	init_requests = tfa98xx_cnt_reload;
-	mutex_unlock(&probe_lock);
-
-	pr_debug("[0x%x] reinit : counter %d\n",
-		tfa98xx->i2c->addr, init_requests);
-	count = snprintf(buf, PAGE_SIZE, "reinit requested: %d\n",
-		init_requests);
-
-	return count;
-}
-
-static ssize_t tfa98xx_reinit_store(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct tfa98xx *tfa98xx = dev_get_drvdata(dev);
-	struct tfa_device *tfa = NULL;
-	int reinit = 0;
-
-	tfa = tfa98xx->tfa;
-	if (!tfa)
-		return -ENODEV;
-	if (tfa->tfa_family == 0) {
-		pr_err("[0x%x] %s: system is not initialized: not probed yet!\n",
-			tfa98xx->i2c->addr, __func__);
-		return -EIO;
-	}
-
-	/* check string length, and account for eol */
-	if (count < 1)
-		return -EINVAL;
-
-	if (!strncmp(buf, "1", 1))
-		reinit = 1;
-	else if (!strncmp(buf, "0", 1))
-		reinit = 0;
-	else {
-		pr_info("%s: reinit is triggered with %s!\n", __func__, buf);
-		return -EINVAL;
-	}
-
-	pr_info("%s: reinit < %d\n", __func__, reinit);
-
-	if (reinit) {
-		mutex_lock(&probe_lock);
-		pr_info("%s: started reloading / reinitializing (counter %d)\n",
-			__func__, tfa98xx_cnt_reload + 1);
-		mutex_unlock(&probe_lock);
-		tfa98xx_set_cnt_reload(NULL, NULL);
-	}
-
-	return count;
-}
-
 static ssize_t tfa98xx_ramp_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -5288,15 +5469,6 @@ static struct device_attribute dev_attr_autocal = {
 	.store = tfa98xx_autocal_store,
 };
 
-static struct device_attribute dev_attr_reinit = {
-	.attr = {
-		.name = "reinit",
-		.mode = 0600,
-	},
-	.show = tfa98xx_reinit_show,
-	.store = tfa98xx_reinit_store,
-};
-
 static struct device_attribute dev_attr_ramp = {
 	.attr = {
 		.name = "ramp",
@@ -5387,6 +5559,12 @@ struct tfa_device *tfa98xx_get_tfa_device_from_channel(int channel)
 	return ntfa;
 }
 EXPORT_SYMBOL(tfa98xx_get_tfa_device_from_channel);
+
+void tfa98xx_reinit(void)
+{
+	tfa98xx_set_cnt_reload(NULL, NULL);
+}
+EXPORT_SYMBOL(tfa98xx_reinit);
 
 int tfa98xx_count_active_stream(int stream_flag)
 {
@@ -5581,16 +5759,6 @@ int tfa98xx_set_blackbox(int enable)
 	pr_info("%s: blackbox < %d\n", __func__, enable);
 	ret = tfa_set_blackbox(enable);
 
-	if (tfa->is_configured > 0) {
-		pr_info("%s: set blackbox directly\n", __func__);
-		tfa->individual_msg = 1;
-#if defined(TFA_SUPPORT_NEW_DATALOGGER)
-		ret = tfa_configure_log2(enable);
-#else
-		ret = tfa_configure_log(enable);
-#endif
-	}
-
 	return ret;
 }
 EXPORT_SYMBOL(tfa98xx_set_blackbox);
@@ -5623,16 +5791,6 @@ int tfa98xx_get_blackbox_data(int dev, int *data)
 		return ret;
 	}
 
-	/* update current session if it's active */
-	/* check head device */
-	if (tfa98xx_count_active_stream(BIT_PSTREAM) > 0
-		&& tfa->is_configured > 0) {
-		ret = tfa_update_log();
-		if (ret != TFA98XX_ERROR_OK)
-			pr_info("%s: failure in updating current data\n",
-				__func__);
-	}
-
 	offset = dev * ID_BLACKBOX_MAX;
 	memcpy(data, tfa->log_data + offset,
 		sizeof(int) * ID_BLACKBOX_MAX);
@@ -5649,7 +5807,6 @@ int tfa98xx_get_blackbox_data_index(int dev, int index, int reset)
 {
 	struct tfa_device *tfa = NULL;
 	int ndev = 0;
-	enum tfa98xx_error ret = TFA98XX_ERROR_OK;
 	int offset;
 	int value = 0;
 
@@ -5675,16 +5832,6 @@ int tfa98xx_get_blackbox_data_index(int dev, int index, int reset)
 		pr_info("%s: blackbox disabled - no update\n",
 			__func__);
 		return -ENODEV;
-	}
-
-	/* update current session if it's active */
-	/* check head device */
-	if (tfa98xx_count_active_stream(BIT_PSTREAM) > 0
-		&& tfa->is_configured > 0) {
-		ret = tfa_update_log();
-		if (ret != TFA98XX_ERROR_OK)
-			pr_info("%s: failure in updating current data\n",
-				__func__);
 	}
 
 	offset = dev * ID_BLACKBOX_MAX;
@@ -6092,11 +6239,18 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 	tfa98xx_ext_reset(tfa98xx);
 
 	if ((no_start == 0) && (no_reset == 0)) {
+		int retries = I2C_1ST_ACCESS_RETRIES;
+retry:
 		ret = regmap_read(tfa98xx->regmap,
 			TFA98XX_DEVICE_REVISION0, &reg);
 		if (ret < 0) {
-			dev_err(&i2c->dev, "Failed to read Revision register: %d\n",
-				ret);
+			dev_err(&i2c->dev, "Failed to read Revision register: %d, retries left: %d\n",
+				ret, retries);
+			if (retries) {
+				retries--;
+				msleep(I2C_RETRY_DELAY);
+				goto retry;
+			}
 			mutex_unlock(&tfa98xx_mutex);
 			goto tfa98xx_i2c_probe_exit;
 		}
@@ -6138,7 +6292,7 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 	}
 
 #if defined(TFA_PLATFORM_QUALCOMM)
-	tfa98xx->tfa->dummy_cal= DUMMY_CALIBRATION_DATA;
+	tfa98xx->tfa->dummy_cal = DUMMY_CALIBRATION_DATA;
 #endif
 	if (np) {
 		ret = tfa98xx_parse_limit_cal_dt(&i2c->dev, tfa98xx, np);
@@ -6156,18 +6310,20 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 				/* set default value instead */
 			}
 #if defined(TFA_PLATFORM_QUALCOMM)
-			tfa98xx->tfa->dummy_cal= tfa98xx->tfa->mohm[0];
+			tfa98xx->tfa->dummy_cal = tfa98xx->tfa->mohm[0];
 			dev_info(&i2c->dev, "[0x%x] dummy_cal : %d\n", i2c->addr, tfa98xx->tfa->dummy_cal);
 #endif
 		}
 		tfa98xx->tfa->mtpex = 1; // mtpex is 1 even in case the dummy cal is used
 		dev_info(&i2c->dev, "[0x%x] cal : %d\n", i2c->addr, tfa98xx->tfa->mohm[0]);
+#if 0 /* inchannel config was moved to tfa98xx_container_loaded after tfa98xx_tfa_start (with TDMSPKS) */
 		ret = tfa98xx_parse_inchannel_dt(&i2c->dev, tfa98xx, np);
 		if (ret) {
 			dev_err(&i2c->dev,
 				"Failed to parse DT node for inchannel\n");
 			/* set default value instead */
 		}
+#endif
 	}
 
 	/* Modify the stream names, by appending the i2c device address.
@@ -6264,10 +6420,6 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 	ret = device_create_file(&i2c->dev, &dev_attr_autocal);
 	if (ret)
 		dev_info(&i2c->dev, "error creating sysfs node, autocal\n");
-
-	ret = device_create_file(&i2c->dev, &dev_attr_reinit);
-	if (ret)
-		dev_info(&i2c->dev, "error creating sysfs node, reinit\n");
 
 	ret = device_create_file(&i2c->dev, &dev_attr_ramp);
 	if (ret)
@@ -6425,9 +6577,11 @@ static int tfa98xx_i2c_remove(struct i2c_client *i2c)
 		tfa98xx_container = NULL;
 	}
 
-	if (tfa98xx)
-		kfree(tfa98xx->tfa);
-	kfree(tfa98xx);
+	if (tfa98xx) {
+		if (tfa98xx->tfa)
+			kfree(tfa98xx->tfa);
+		kfree(tfa98xx);
+	}
 
 	i2c_set_clientdata(i2c, NULL);
 	mutex_unlock(&tfa98xx_mutex);
