@@ -71,6 +71,8 @@ enum tfa98xx_blackbox2_id {
 	ID2_OVERXMAX_COUNT = 4,
 	ID2_MAXT_LOG = 5,
 	ID2_MAXX_LOG = 6,
+	ID2_SPK_BLOCK_COUNT = 7,
+	ID2_SPK_LEAK_COUNT = 8,
 	/* device section */
 	ID2_OCP_COUNT,
 	ID2_NOCLK_COUNT,

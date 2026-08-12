@@ -96,7 +96,9 @@ enum tfa98xx_error tfa_get_cal_temp(int index, uint16_t *value);
 enum tfa98xx_error tfa_get_cal_temp_channel(int channel, uint16_t *value);
 
 #define TFA_LOG_MAX_COUNT	4
-#define TFA_LOG2_MAX_COUNT	7
+#define TFA_LOG2_MAX_COUNT	9 /* 7 --> 9 for spkBlock and spkLeak */
+#define TFA_DATA_LOGGER_CMD_VER1	0x800001
+#define TFA_DATA_LOGGER_CMD_VER9	0x800009
 int tfa_set_blackbox(int enable);
 enum tfa98xx_error tfa_configure_log(int enable);
 enum tfa98xx_error tfa_configure_log2(int enable);

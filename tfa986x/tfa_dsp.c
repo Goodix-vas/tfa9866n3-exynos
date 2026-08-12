@@ -2873,12 +2873,15 @@ enum tfa98xx_error tfa_wait_cal(struct tfa_device *tfa)
 		if (!tfa_is_active_device(ntfa))
 			continue;
 
+		if (cal_err == TFA98XX_ERROR_STATE_TIMED_OUT) {
+			pr_err("%s: calibration fails due to TIMED_OUT\n", __func__);
+			ntfa->mtpex = 1;
+			ntfa->mohm[0] = -128000;
+			break;
+		}
 		if (ntfa->dev_idx == 0 && ntfa->cal_channel == SPK_CH)
 			continue;
 		if (ntfa->dev_idx == 1 && ntfa->cal_channel == RCV_CH)
-			continue;
-
-		if (ntfa->spkr_damaged)
 			continue;
 
 		pr_debug("%s: [%d] process calibration data\n",
@@ -4550,7 +4553,6 @@ enum tfa_error tfa_dev_mtp_set(struct tfa_device *tfa,
 {
 	enum tfa_error err = tfa_error_ok;
 	enum tfa98xx_error ret = TFA98XX_ERROR_OK;
-	int rdc = 0;
 
 	if (tfa == NULL) {
 		pr_err("%s: tfa is NULL\n",	__func__);
@@ -4568,11 +4570,6 @@ enum tfa_error tfa_dev_mtp_set(struct tfa_device *tfa,
 		if (value == 0) {
 			tfa->mohm[0] = 0;
 			tfa->reset_mtpex = 0;
-		} else {
-			if (tfa->mohm[0] <= 0) {
-				rdc = 6000; /* hard-coded */
-				tfa->mohm[0] = rdc;
-			}
 		}
 		tfa->mtpex = value;
 		break;
@@ -5122,6 +5119,7 @@ enum tfa98xx_error tfa_update_log2(void)
 	uint8_t cmd_buf[((TFA_LOG2_MAX_COUNT * MAX_CHANNELS) + 1) * 3] = {0};
 	int data[(TFA_LOG2_MAX_COUNT * MAX_CHANNELS) + 1] = {0};
 	int read_size;
+	uint32_t cmd_ver; 
 
 	/* set head device */
 	tfa = tfa98xx_get_tfa_device_from_index(-1);
@@ -5151,6 +5149,13 @@ enum tfa98xx_error tfa_update_log2(void)
 	tfa98xx_convert_bytes2data(read_size, cmd_buf, data);
 	pr_info("%s: DataLogger command version 0x%x\n", __func__, data[0]);
 
+	cmd_ver = data[0] & 0xffffff;
+	if (cmd_ver != TFA_DATA_LOGGER_CMD_VER1 &&
+		cmd_ver != TFA_DATA_LOGGER_CMD_VER9) {
+		pr_err("%s: getDataLogger cmd version is invalid\n", __func__);
+		return err;
+	}
+
 	for (idx = 0; idx < ndev; idx++) {
 		ntfa = tfa98xx_get_tfa_device_from_index(idx);
 
@@ -5159,7 +5164,10 @@ enum tfa98xx_error tfa_update_log2(void)
 		if (!tfa_is_active_device(ntfa))
 			continue;
 
-		offset = 1 + (idx * TFA_LOG2_MAX_COUNT);
+		if (cmd_ver == TFA_DATA_LOGGER_CMD_VER9)
+			offset = 1 + (idx * TFA_LOG2_MAX_COUNT);
+		else
+			offset = 1 + (idx * (TFA_LOG2_MAX_COUNT-2));
 		group = idx * ID_BLACKBOX_MAX;
 
 		/* maximum x (um) */
@@ -5232,7 +5240,14 @@ enum tfa98xx_error tfa_update_log2(void)
 			data[offset + ID2_MUTEIN_COUNT],
 			data[offset + ID2_MUTEOUT_COUNT],
 			data[offset + ID2_OPEN_CIRCUIT]);
-	
+
+		if (cmd_ver == TFA_DATA_LOGGER_CMD_VER9) {
+			pr_info("%s: dev %d - blackbox: [SpkBlockCnt=%d, SpkLeakCnt=%d]\n",
+				__func__, idx,
+				data[offset + ID2_SPK_BLOCK_COUNT],
+				data[offset + ID2_SPK_LEAK_COUNT]);
+		}
+
 		pr_info("%s: dev %d - blackbox: [OCPC = %d, NOCLKC = %d]\n",
 			__func__, idx,
 			tfa->log_data[group + ID_OCP_COUNT],

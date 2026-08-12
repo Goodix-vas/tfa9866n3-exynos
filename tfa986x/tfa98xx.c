@@ -5646,14 +5646,12 @@ enum tfa98xx_error tfa_run_cal(int index, uint16_t *value)
 	if (index == RCV_CH) {
 		if (spkr_damaged[0] == 1 || cal_mohm[0] <= 0) {
 			*value = 0xffff;
-			tfa_set_cal_data(0, DUMMY_CALIBRATION_DATA);
 			return TFA98XX_ERROR_FAIL;
 		}
 		*value = (uint16_t)cal_mohm[0];
 	} else if (index == SPK_CH) {
 		if (spkr_damaged[1] == 1 || cal_mohm[1] <= 0) {
 			*value = 0xffff;
-			tfa_set_cal_data(1, DUMMY_CALIBRATION_DATA);
 			return TFA98XX_ERROR_FAIL;
 		}
 		*value = (uint16_t)cal_mohm[1];
@@ -5661,11 +5659,9 @@ enum tfa98xx_error tfa_run_cal(int index, uint16_t *value)
 		bool cal_fail = false;
 		if (spkr_damaged[0] == 1 || cal_mohm[0] <= 0) {
 			cal_fail = true;
-			tfa_set_cal_data(0, DUMMY_CALIBRATION_DATA);
 		}
 		if (spkr_damaged[1] == 1 || cal_mohm[1] <= 0) {
 			cal_fail = true;
-			tfa_set_cal_data(1, DUMMY_CALIBRATION_DATA);
 		}
 		if (cal_fail == true) {
 			*value = 0xffff;
@@ -5699,7 +5695,6 @@ enum tfa98xx_error tfa_get_cal_data(int index, uint16_t *value)
 			__func__);
 		*value = 0xffff;
 		tfa->temp = 0xffff;
-		return TFA98XX_ERROR_FAIL;
 	}
 
 	return TFA98XX_ERROR_OK;
@@ -5770,9 +5765,6 @@ enum tfa98xx_error tfa_get_cal_temp(int index, uint16_t *value)
 		pr_info("%s: calibration temperature is not valid\n",
 			__func__);
 		*value = tfa98xx_get_exttemp(tfa);
-		pr_info("%s: calibration temperature is not valid\n",
-			__func__);
-		return TFA98XX_ERROR_FAIL;
 	}
 
 	return TFA98XX_ERROR_OK;
