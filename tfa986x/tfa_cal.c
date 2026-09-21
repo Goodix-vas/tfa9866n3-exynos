@@ -380,6 +380,7 @@ static ssize_t status_store(struct device *dev,
 	ret = tfa_run_cal(status, &value);
 	if (ret) {
 		pr_err("%s: tfa_cal failed to calibrate speaker, %d\n", __func__, ret);
+		cur_status = 0; /* set "disabled" status even though cal. is failed */
 		return -EINVAL;
 	}
 

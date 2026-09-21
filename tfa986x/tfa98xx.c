@@ -1722,6 +1722,7 @@ static int tfa98xx_run_calibration(struct tfa98xx *tfa98xx0)
 		if (tfa == NULL)
 			continue;
 
+		tfa_dev_mtp_set(tfa, TFA_MTP_EX, 1); /* to avoid auto-cal in case of cal. failure */
 		/* restore flag for auto calibration */
 		tfa->disable_auto_cal = temp_calflag;
 	}
@@ -1732,7 +1733,6 @@ static int tfa98xx_run_calibration(struct tfa98xx *tfa98xx0)
 		return -EIO;
 	}
 
-	pr_info("%s: calibration triggered!\n", __func__);
 	pr_info("%s: end\n", __func__);
 
 	return 0;

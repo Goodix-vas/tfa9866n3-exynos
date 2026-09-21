@@ -1946,7 +1946,6 @@ enum tfa98xx_error tfa_set_calibration_values(struct tfa_device *tfa)
 	struct tfa_device *ntfa;
 	int i;
 	char reg_state[STAT_LEN] = {0};
-	enum tfa_error ret = tfa_error_ok;
 
 	if (tfa == NULL) {
 		pr_err("%s: tfa is NULL\n",	__func__);
@@ -2020,26 +2019,11 @@ enum tfa98xx_error tfa_set_calibration_values(struct tfa_device *tfa)
 	value = tfa_dev_mtp_get(tfa, TFA_MTP_RE25);
 	pr_info("%s: extract from MTP - %d mOhms\n", __func__, value);
 
-	dsp_cal_value[channel] = TFA_ReZ_CALC(value, TFA_FW_ReZ_SHIFT);
-	if (tfa->mtpex) {
-		err = tfa_calibration_range_check(tfa, channel, value);
-		if (err) {
-			need_cal |= 1;
-			err = TFA98XX_ERROR_OK;
-			pr_info("%s: run calibration because of out-of-range\n",
-				__func__);
+	/* to dummy cal. in case of cal. failure */
+	if (need_cal == 0 && value <= 0)
+		value = tfa->dummy_cal;
 
-			/* reset MTPEX to force calibration */
-			ret = tfa_dev_mtp_set(tfa, TFA_MTP_EX, 0);
-			if (ret != tfa_error_ok) {
-				pr_err("%s: resetting MPTEX failed, device %d err (%d)\n",
-					__func__, tfa->dev_idx, ret);
-				tfa->reset_mtpex = 1;
-			}
-		}
-	}
-	if (value <= 0) /* run equivalent with calibration */
-		need_cal |= 1;
+	dsp_cal_value[channel] = TFA_ReZ_CALC(value, TFA_FW_ReZ_SHIFT);
 
 	pr_info("%s: dev %d, channel %d - calibration data: %d [%s]\n",
 		__func__, tfa->dev_idx, channel, value,
