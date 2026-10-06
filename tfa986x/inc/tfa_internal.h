@@ -115,5 +115,7 @@ enum tfa98xx_error tfa98xx_set_osc_powerdown(struct tfa_device *tfa, int state);
 
 enum tfa98xx_error tfa98xx_update_lpm(struct tfa_device *tfa, int state);
 
+struct mutex *tfa98xx_get_dsp_lock(struct tfa_device *tfa);
+
 #endif /* __TFA_INTERNAL_H__ */
 

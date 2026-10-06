@@ -619,6 +619,7 @@ int tfa_get_dev_idx_from_inchannel(int inchannel)
 	static int devset[MAX_CHANNELS] = {
 		TFA_NOT_FOUND, TFA_NOT_FOUND
 	};
+	struct mutex *tfa98xx_dsp_lock;
 
 	if (inchannel < 0 || inchannel >= MAX_CHANNELS)
 		return TFA_NOT_FOUND; /* invalid inchannel */
@@ -632,9 +633,18 @@ int tfa_get_dev_idx_from_inchannel(int inchannel)
 		if (ntfa == NULL)
 			continue;
 
-		if (ntfa->inchannel == inchannel) {
-			devset[inchannel] = ntfa->dev_idx;
-			return ntfa->dev_idx; /* defined */
+		tfa98xx_dsp_lock = tfa98xx_get_dsp_lock(ntfa);
+		if (tfa98xx_dsp_lock != NULL) {
+			mutex_lock(tfa98xx_dsp_lock);
+			if (ntfa->inchannel == inchannel) {
+				mutex_unlock(tfa98xx_dsp_lock);
+				devset[inchannel] = ntfa->dev_idx;
+				return ntfa->dev_idx; /* defined */
+			}
+			mutex_unlock(tfa98xx_dsp_lock);
+		} else {
+			pr_debug("%s: tfa98xx_dsp_lock is NULL\n", __func__);
+			break;
 		}
 
 		if (i >= ntfa->dev_count - 1)
@@ -1000,13 +1010,13 @@ static enum tfa98xx_error _dsp_msg(struct tfa_device *tfa, int lastmessage)
 	int buf_p_index = -1;
 
 	buf_p_index = tfa98xx_buffer_pool_access
-		(-1, 64 * 1024, &blob, POOL_GET);
+		(-1, 32 * 1024, &blob, POOL_GET);
 	if (buf_p_index != -1) {
 		pr_debug("%s: allocated from buffer_pool[%d] for 64 KB\n",
 			__func__, buf_p_index);
 	} else {
 		/* max length is 64k */
-		blob = kmalloc(64 * 1024, GFP_KERNEL);
+		blob = kmalloc(32 * 1024, GFP_KERNEL);
 		if (blob == NULL) {
 			return TFA98XX_ERROR_FAIL;
 		}

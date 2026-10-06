@@ -2155,12 +2155,12 @@ int tfa_tib_dsp_msgmulti(struct tfa_device *tfa,
 			tfa98xx_buffer_pool_access
 				(blob_p_index[idx], 0, &blob[idx], POOL_RETURN);
 		blob_p_index[idx] = tfa98xx_buffer_pool_access
-			(-1, 64 * 1024, &blob[idx], POOL_GET);
+			(-1, 32 * 1024, &blob[idx], POOL_GET);
 		if (blob_p_index[idx] != -1) {
 			pr_debug("%s: allocated from buffer_pool[%d]\n",
 				__func__, blob_p_index[idx]);
 		} else {
-			blob[idx] = kmalloc(64 * 1024, GFP_KERNEL);
+			blob[idx] = kmalloc(32 * 1024, GFP_KERNEL);
 			/* max length is 64k */
 			if (blob[idx] == NULL) {
 				return TFA_ERROR;

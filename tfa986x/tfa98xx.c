@@ -98,11 +98,11 @@ static struct snd_kcontrol_new *tfa98xx_controls;
 static struct tfa_container *tfa98xx_container;
 
 static int buf_pool_size[POOL_MAX_INDEX] = {
-	64 * 1024,
-	64 * 1024,
-	64 * 1024,
-	64 * 1024,
-	64 * 1024,
+	32 * 1024,
+	32 * 1024,
+	32 * 1024,
+	32 * 1024,
+	32 * 1024,
 	8 * 1024
 };
 
@@ -617,6 +617,7 @@ static ssize_t tfa98xx_dbgfs_dsp_state_get(struct file *file,
 	int ret = 0;
 	char *str;
 
+	mutex_lock(&tfa98xx->dsp_lock);
 	switch (tfa98xx->dsp_init) {
 	case TFA98XX_DSP_INIT_STOPPED:
 		str = "Stopped\n";
@@ -637,6 +638,7 @@ static ssize_t tfa98xx_dbgfs_dsp_state_get(struct file *file,
 		str = "Invalid\n";
 		break;
 	}
+	mutex_unlock(&tfa98xx->dsp_lock);
 
 	pr_debug("[0x%x] dsp_state : %s\n", tfa98xx->i2c->addr, str);
 
@@ -927,158 +929,6 @@ static ssize_t tfa98xx_dbgfs_rpc_send(struct file *file,
 	return count;
 }
 /* -- RPC */
-
-#if !defined(TFA_PLATFORM_QUALCOMM)
-#define MAX_MEMTRACK_ITEMS 20
-static int g_mm_count = 0;
-
-static ssize_t tfa98xx_dbgfs_memtrack_read(struct file *file,
-	char __user *user_buf, size_t count, loff_t *ppos)
-{
-	struct i2c_client *i2c = file->private_data;
-	struct tfa98xx *tfa98xx = i2c_get_clientdata(i2c);
-	enum tfa98xx_error error;
-	struct tfa_device *tfa = NULL;
-	uint8_t *buf24;
-	int buf24_len = 0, i = 0, pos = 0;
-	int memtrack_data[MAX_MEMTRACK_ITEMS+1] = {0}; /* interval + memtracks */
-	char memtrack_str[(MAX_MEMTRACK_ITEMS+1)*10] = {0};
-	int max_mm_str_len = (MAX_MEMTRACK_ITEMS+1)*10;
-
-	if (*ppos != 0)
-		return 0;
-
-	if (tfa98xx->tfa == NULL) {
-		pr_err("[0x%x] tfa is not available\n", tfa98xx->i2c->addr);
-		return -ENODEV;
-	}
-	tfa = tfa98xx->tfa;
-
-	if (count == 0)
-		return 0;
-
-	if (tfa98xx->pstream == 0 || tfa->is_configured <= 0) {
-		pr_info("[0x%x] skipped - tfadsp is not active!\n", tfa98xx->i2c->addr);
-		return count;
-	}
-
-	pr_info("[0x%x] g_mm_count %d\n", tfa98xx->i2c->addr, g_mm_count);
-
-	if (g_mm_count > MAX_MEMTRACK_ITEMS)
-		g_mm_count = MAX_MEMTRACK_ITEMS;
-	buf24_len = (g_mm_count+1) * 3;
-	buf24 = kmalloc(buf24_len, GFP_KERNEL);
-	if (buf24 == NULL) {
-		pr_err("[0x%x] can not allocate memory\n", tfa98xx->i2c->addr);
-		return -ENOMEM;
-	}
-
-	error = tfa_dsp_cmd_id_write_read(tfa, MODULE_FRAMEWORK,
-		FW_PAR_ID_GET_MEMTRACK,	buf24_len, buf24);
-	if (error == TFA98XX_ERROR_OK)
-		tfa98xx_convert_bytes2data(buf24_len, buf24, memtrack_data);
-	else
-		pr_err("[0x%x] tfa_dsp_cmd_id_write_read error: %d\n",
-			tfa98xx->i2c->addr, error);
-	kfree(buf24);
-
-	for (i = 0; i < g_mm_count+1; i++) {
-		if (i == 0)
-			pos += snprintf(memtrack_str + pos, max_mm_str_len - pos,
-				"0x%06x", memtrack_data[i]);
-		else
-			pos += snprintf(memtrack_str + pos, max_mm_str_len - pos,
-				",0x%06x", memtrack_data[i]);
-	}
-	pos += snprintf(memtrack_str + pos, max_mm_str_len - pos, "\n");
-
-	return simple_read_from_buffer(user_buf, count, ppos, memtrack_str, pos);
-}
-
-static ssize_t tfa98xx_dbgfs_memtrack_send(struct file *file,
-	const char __user *user_buf, size_t count, loff_t *ppos)
-{
-	struct i2c_client *i2c = file->private_data;
-	struct tfa98xx *tfa98xx = i2c_get_clientdata(i2c);
-	enum tfa98xx_error error;
-	struct tfa_device *tfa = NULL;
-	int ret = 0;
-	char *memtrack_str = NULL, *token = NULL, *cur = NULL;
-	int memtrack_items[MAX_MEMTRACK_ITEMS] = {0};
-	int mm_value = 0, i = 0, buf24_len = 0;
-	uint8_t *buf24 = NULL;
-
-	if (tfa98xx->tfa == NULL) {
-		pr_err("[0x%x] tfa is not available\n", tfa98xx->i2c->addr);
-		return -ENODEV;
-	}
-	tfa = tfa98xx->tfa;
-
-	pr_info("[0x%x] count %zu\n", tfa98xx->i2c->addr, count);
-
-	if (count == 0)
-		return 0;
-
-	if (tfa98xx->pstream == 0 || tfa->is_configured <= 0) {
-		pr_info("[0x%x] skipped - tfadsp is not active!\n", tfa98xx->i2c->addr);
-		return count;
-	}
-
-	memtrack_str = kmalloc((MAX_MEMTRACK_ITEMS+2)*3, GFP_KERNEL);
-	if (memtrack_str == NULL) {
-		pr_err("[0x%x] can not allocate memory\n", tfa98xx->i2c->addr);
-		return -ENOMEM;
-	}
-	memset(memtrack_str, 0, (MAX_MEMTRACK_ITEMS+2)*3);
-
-	if (copy_from_user(memtrack_str, user_buf, count)) {
-		kfree(memtrack_str);
-		pr_err("[0x%x] memory copy error\n", tfa98xx->i2c->addr);
-		return -EFAULT;
-	}
-
-	g_mm_count = 0;
-	cur = memtrack_str;
-	while ((token = strsep(&cur, ",")) != NULL) {
-		if (*token == '\0')
-			continue;
-		ret = kstrtoint(token, 0, &mm_value);
-		if (ret)
-			continue;
-
-		if (g_mm_count < MAX_MEMTRACK_ITEMS) {
-			pr_info("[0x%x] memtrack[%d] 0x%x\n", tfa98xx->i2c->addr, g_mm_count, mm_value);
-			memtrack_items[g_mm_count++] = mm_value;
-		}
-		else
-			break;
-	}
-
-	memset(memtrack_str, 0, (MAX_MEMTRACK_ITEMS+2)*3);
-	buf24 = (uint8_t *)memtrack_str;
-	buf24[buf24_len++] = 0x00;
-	buf24[buf24_len++] = (0x80 | MODULE_FRAMEWORK);
-	buf24[buf24_len++] = FW_PAR_ID_SET_MEMTRACK;
-	buf24[buf24_len++] = 0x00;
-	buf24[buf24_len++] = 0x00;
-	buf24[buf24_len++] = (uint8_t)g_mm_count;
-	for (i = 0; i < g_mm_count; i++) {
-		buf24[buf24_len++] = (uint8_t)((memtrack_items[i] & 0xFF0000) >> 16);
-		buf24[buf24_len++] = (uint8_t)((memtrack_items[i] & 0x00FF00) >> 8);
-		buf24[buf24_len++] = (uint8_t)(memtrack_items[i] & 0x0000FF);
-	}
-
-	mutex_lock(&tfa98xx->dsp_lock);
-	tfa->individual_msg = 1;
-	error = dsp_msg(tfa, buf24_len, buf24);
-	if (error != TFA98XX_ERROR_OK)
-		pr_err("[0x%x] dsp_msg error: %d\n", tfa98xx->i2c->addr, error);
-	mutex_unlock(&tfa98xx->dsp_lock);
-
-	kfree(memtrack_str);
-	return count;
-}
-#endif /* TFA_PLATFORM_QUALCOMM */
 
 /* ++ DSP message fops */
 static ssize_t tfa98xx_dbgfs_dsp_read(struct file *file,
@@ -1464,15 +1314,6 @@ static const struct file_operations tfa98xx_dbgfs_show_cal_fops = {
 	.llseek = default_llseek,
 };
 
-#if !defined(TFA_PLATFORM_QUALCOMM)
-static const struct file_operations tfa98xx_dbgfs_memtrack_fops = {
-	.open = simple_open,
-	.read = tfa98xx_dbgfs_memtrack_read,
-	.write = tfa98xx_dbgfs_memtrack_send,
-	.llseek = default_llseek,
-};
-#endif
-
 static void tfa98xx_debug_init(struct tfa98xx *tfa98xx, struct i2c_client *i2c)
 {
 	char name[50];
@@ -1501,10 +1342,6 @@ static void tfa98xx_debug_init(struct tfa98xx *tfa98xx, struct i2c_client *i2c)
 		i2c, &tfa98xx_dbgfs_rpc_fops);
 	debugfs_create_file("dsp", 0644, tfa98xx->dbg_dir,
 		i2c, &tfa98xx_dbgfs_dsp_fops);
-#if !defined(TFA_PLATFORM_QUALCOMM)
-	debugfs_create_file("memtrack", 0644, tfa98xx->dbg_dir,
-		i2c, &tfa98xx_dbgfs_memtrack_fops);
-#endif
 
 	debugfs_create_file("trace-level", 0644,
 		tfa98xx->dbg_dir,
@@ -3852,8 +3689,14 @@ static void tfa98xx_monitor(struct work_struct *work)
 	mutex_unlock(&tfa98xx->dsp_lock);
 
 	if (error == TFA98XX_ERROR_DSP_NOT_RUNNING) {
+		int dsp_init_recover = 0;
+		mutex_lock(&tfa98xx->dsp_lock);
 		if (tfa98xx->dsp_init == TFA98XX_DSP_INIT_DONE) {
 			tfa98xx->dsp_init = TFA98XX_DSP_INIT_RECOVER;
+			dsp_init_recover = 1;
+		}
+		mutex_unlock(&tfa98xx->dsp_lock);
+		if (dsp_init_recover == 1) {
 			tfa98xx_set_dsp_configured(tfa98xx);
 			pr_info("%s: dsp_init (direct) with device %d, profile %d\n",
 				__func__,
@@ -3927,14 +3770,15 @@ static void tfa98xx_dsp_init(struct tfa98xx *tfa98xx)
 		return;
 	}
 
+	mutex_lock(&tfa98xx->dsp_lock);
 	if (tfa98xx->dsp_init == TFA98XX_DSP_INIT_DONE) {
 		pr_debug("Stream already started, skipping DSP power-on\n");
+		mutex_unlock(&tfa98xx->dsp_lock);
 		return;
 	}
 
 	pr_info("%s: ...\n", __func__);
 
-	mutex_lock(&tfa98xx->dsp_lock);
 	tfa98xx->dsp_init = TFA98XX_DSP_INIT_PENDING;
 
 	/* directly try to start DSP */
@@ -6220,7 +6064,9 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 
 	tfa98xx->dev = &i2c->dev;
 	tfa98xx->i2c = i2c;
+	/* Not required as TFA98XX_DSP_INIT_STOPPED = 0
 	tfa98xx->dsp_init = TFA98XX_DSP_INIT_STOPPED;
+	*/
 	tfa98xx->rate = 48000; /* init to the default sample rate (48kHz) */
 	tfa98xx->tfa = NULL;
 
@@ -6568,6 +6414,20 @@ int tfa98xx_get_init_state(int dev_idx)
 	return ret;
 }
 EXPORT_SYMBOL(tfa98xx_get_init_state);
+
+struct mutex *tfa98xx_get_dsp_lock(struct tfa_device *tfa)
+{
+	struct tfa98xx *tfa98xx = NULL;
+
+	if (tfa == NULL)
+		return NULL;
+
+	tfa98xx = (struct tfa98xx *)tfa->data;
+	if (tfa98xx == NULL)
+		return NULL;
+
+	return &tfa98xx->dsp_lock;
+}
 
 #if KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE
 static void tfa98xx_i2c_remove(struct i2c_client *i2c)
